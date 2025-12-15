@@ -1,0 +1,111 @@
+version: "3.9"
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000" # API
+      - "9001:9001" # Console
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: node-server
+    env_file:
+      - ./server/.env
+    environment:
+      - NODE_ENV=development
+      - MINIO_ENDPOINT=minio
+      - MINIO_PORT=9000
+      - MINIO_USE_SSL=false
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_BUCKET=wedocs
+      - PYTHON_MANAGER_URL=http://python-manager:5000
+    ports:
+      - "3000:3000"
+    depends_on:
+      minio:
+        condition: service_healthy
+      python-manager:
+        condition: service_started
+    command: ["npm", "run", "dev"]
+
+  tus-server:
+    build:
+      context: ./tus-server
+      dockerfile: Dockerfile
+    container_name: tus-server
+    environment:
+      - MINIO_ENDPOINT=minio
+      - MINIO_PORT=9000
+      - MINIO_USE_SSL=false
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_BUCKET=wedocs
+    ports:
+      - "4000:4000"
+    depends_on:
+      minio:
+        condition: service_healthy
+    command: ["npm", "run", "dev"]
+
+  python-manager:
+    build:
+      context: ./python-manager
+      dockerfile: Dockerfile
+    container_name: python-manager
+    environment:
+      - PORT=5000
+      - CONVERTER_MODULE_URL=http://converter-module:5001
+    ports:
+      - "5000:5000"
+    depends_on:
+      - converter-module
+
+  converter-module:
+    build:
+      context: ./python-manager/modules/converter-module
+      dockerfile: Dockerfile
+    container_name: converter-module
+    environment:
+      - PORT=5001
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_BUCKET=wedocs
+    ports:
+      - "5001:5001"
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    environment:
+      - NEXT_PUBLIC_TUS_ENDPOINT=http://localhost:4000/files
+      - NEXT_PUBLIC_API_BASE=http://localhost:3000
+    ports:
+      - "3001:3000"
+    depends_on:
+      - server
+      - tus-server
+
+volumes:
+  minio_data:

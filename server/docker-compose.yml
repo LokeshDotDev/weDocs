@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+  - DATABASE_URL=postgresql://postgres:password@pgbouncer:6432/express_template
+      - JWT_SECRET=production-jwt-secret-change-me
+      - BCRYPT_ROUNDS=12
+      - BASIC_AUTH_USERNAME=admin
+      - BASIC_AUTH_PASSWORD=secure-admin-password
+      - CORS_ORIGIN=http://localhost:3000
+      - LOG_LEVEL=info
+      - LOG_PRETTY=false
+      - ENABLE_CLUSTER=true
+      - TRUST_PROXY=true
+      - RATE_LIMIT_STORE=redis
+      - REDIS_URL=redis://redis:6379
+      - LOG_REQUESTS_TO_DB=false
+      - LOG_DB_SAMPLE_RATE=0.1
+      - LOG_DB_MAX_BODY_LENGTH=2000
+      - PRISMA_LOG_QUERIES=false
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=express_template
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  pgbouncer:
+    image: edoburu/pgbouncer:1.23.1
+    environment:
+      - DB_USER=postgres
+      - DB_PASSWORD=password
+      - DB_HOST=db
+      - DB_NAME=express_template
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=10000
+      - DEFAULT_POOL_SIZE=50
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "6432:6432"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres_data:

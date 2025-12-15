@@ -1,0 +1,39 @@
+# Build pdf2htmlEX from source
+FROM ubuntu:20.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    libfontforge-dev \
+    libpoppler-cpp-dev \
+    libpoppler-dev \
+    python3 \
+    python3-pip \
+    git \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp
+
+# Clone and build pdf2htmlEX
+RUN git clone https://github.com/pdf2htmlEX/pdf2htmlEX.git && \
+    cd pdf2htmlEX && \
+    mkdir build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release .. && \
+    make && make install && \
+    ldconfig
+
+# Set up application
+WORKDIR /app
+COPY main.py .
+COPY requirements.txt .
+
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+EXPOSE 5002
+
+CMD ["python3", "main.py"]
