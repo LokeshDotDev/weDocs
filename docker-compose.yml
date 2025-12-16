@@ -1,6 +1,23 @@
 version: "3.9"
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=wedocs
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   minio:
     image: minio/minio:latest
     container_name: minio
@@ -10,6 +27,8 @@ services:
     environment:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin
+      # Allow all origins for development - ONLYOFFICE and frontend need to fetch docs
+      - MINIO_ALLOW_PUBLIC_BUCKET_ACCESS=true
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
@@ -18,6 +37,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - wedocs-net
 
   server:
     build:
@@ -28,6 +49,7 @@ services:
       - ./server/.env
     environment:
       - NODE_ENV=development
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/wedocs
       - MINIO_ENDPOINT=minio
       - MINIO_PORT=9000
       - MINIO_USE_SSL=false
@@ -36,8 +58,10 @@ services:
       - MINIO_BUCKET=wedocs
       - PYTHON_MANAGER_URL=http://python-manager:5000
     ports:
-      - "3000:3000"
+      - "3001:3000"
     depends_on:
+      postgres:
+        condition: service_healthy
       minio:
         condition: service_healthy
       python-manager:
@@ -93,6 +117,30 @@ services:
       minio:
         condition: service_healthy
 
+  onlyoffice-document-server:
+    image: onlyoffice/documentserver:latest
+    container_name: onlyoffice-document-server
+    environment:
+      - JWT_ENABLED=false
+      - JWT_SECRET=your-secret-key-change-in-production
+      # Configure ONLYOFFICE to use proper hostname for WebSocket
+      - WOPI_HOST=localhost:8080
+      # Allow ONLYOFFICE to download from private IPs (host.docker.internal)
+      - ALLOW_PRIVATE_IP_ADDRESS=true
+      - ALLOW_META_IP_ADDRESS=true
+    ports:
+      - "8080:80"
+    volumes:
+      - onlyoffice_data:/var/www/onlyoffice/Data
+      - onlyoffice_logs:/var/log/onlyoffice
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    stdin_open: true
+    tty: true
+    restart: always
+    networks:
+      - wedocs-net
+
   frontend:
     build:
       context: ./frontend
@@ -101,11 +149,20 @@ services:
     environment:
       - NEXT_PUBLIC_TUS_ENDPOINT=http://localhost:4000/files
       - NEXT_PUBLIC_API_BASE=http://localhost:3000
+      - NEXT_PUBLIC_ONLYOFFICE_API_URL=http://localhost:8080
     ports:
       - "3001:3000"
     depends_on:
       - server
       - tus-server
+      - onlyoffice-document-server
 
 volumes:
   minio_data:
+  postgres_data:
+  onlyoffice_data:
+  onlyoffice_logs:
+
+networks:
+  wedocs-net:
+    driver: bridge

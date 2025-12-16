@@ -151,7 +151,7 @@ export function useFileConverter(): UseFileConverterReturn {
 
 				try {
 					const response = await fetch(
-						`${API_BASE}/api/converter/pdf-to-html-direct`,
+						`${API_BASE}/api/converter/pdf-to-html`,
 						{
 							method: "POST",
 							headers: { "Content-Type": "application/json" },

@@ -15,6 +15,7 @@ class Config:
         "converter": {
             "url": os.getenv("CONVERTER_MODULE_URL", "http://localhost:5001"),
             "endpoints": {
+                "pdf-to-docx": "/convert/pdf-to-docx",
                 "pdf-to-html": "/convert/pdf-to-html",
                 "pdf-to-html-direct": "/convert/pdf-to-html-direct",
                 "health": "/health",

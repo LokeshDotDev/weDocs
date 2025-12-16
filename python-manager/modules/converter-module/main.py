@@ -17,6 +17,13 @@ app = FastAPI(
 )
 
 # Models
+class ConvertPdfToDocxRequest(BaseModel):
+    user_id: str
+    upload_id: str
+    filename: str
+    relative_path: str
+
+# Legacy support (kept for backward compatibility)
 class ConvertPdfToHtmlRequest(BaseModel):
     user_id: str
     upload_id: str
@@ -37,6 +44,64 @@ async def health_check():
         "version": config.APP_VERSION,
         "service": "converter",
     }
+
+@app.post("/convert/pdf-to-docx")
+async def convert_pdf_to_docx(request: ConvertPdfToDocxRequest) -> Dict[str, Any]:
+    """
+    Convert PDF to DOCX for editing in ONLYOFFICE.
+    
+    Flow:
+    1. Download PDF from MinIO /raw/
+    2. Convert PDF → DOCX (pdf2docx)
+    3. Upload DOCX to MinIO /formatted/ (ready for editing)
+    
+    Returns conversion status and file path.
+    """
+    try:
+        logger.info(f"📥 Received PDF→DOCX conversion request: {request.filename}")
+        
+        # Validate file type
+        if not request.filename.lower().endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="Only PDF files are supported")
+        
+        # Build MinIO object keys
+        raw_key = f"users/{request.user_id}/uploads/{request.upload_id}/raw/{request.relative_path}"
+        docx_key = f"users/{request.user_id}/uploads/{request.upload_id}/formatted/{request.relative_path.replace('.pdf', '.docx')}"
+        
+        logger.info(f"🔄 Starting PDF→DOCX conversion for {request.relative_path}")
+        
+        # Step 1: Download PDF from MinIO
+        logger.info(f"📥 Downloading PDF: {raw_key}")
+        pdf_data = minio_handler.download_file(raw_key)
+        logger.info(f"✅ PDF downloaded ({len(pdf_data.getvalue())} bytes)")
+        
+        # Step 2: Convert PDF to DOCX
+        logger.info(f"📄 Converting PDF → DOCX")
+        docx_data = PDFConverter.convert_pdf_to_docx(pdf_data)
+        logger.info(f"✅ DOCX created ({len(docx_data.getvalue())} bytes)")
+        
+        # Step 3: Upload DOCX to MinIO formatted/ (ready for editing)
+        logger.info(f"📤 Uploading DOCX: {docx_key}")
+        minio_handler.upload_file(docx_key, docx_data, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        logger.info(f"✅ DOCX uploaded to MinIO - ready for editing in ONLYOFFICE")
+        
+        logger.info(f"✅ Conversion complete for {request.relative_path}")
+        
+        return {
+            "status": "success",
+            "user_id": request.user_id,
+            "upload_id": request.upload_id,
+            "filename": request.filename,
+            "raw_path": raw_key,
+            "formatted_path": docx_key,
+            "conversion_type": "pdf_to_docx",
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Conversion failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/convert/pdf-to-html")
 async def convert_pdf_to_html(request: ConvertPdfToHtmlRequest) -> Dict[str, Any]:
@@ -175,8 +240,9 @@ async def root():
         "version": config.APP_VERSION,
         "endpoints": {
             "health": "/health",
-            "convert": "/convert/pdf-to-html",
-            "convert_direct": "/convert/pdf-to-html-direct",
+            "convert": "/convert/pdf-to-docx",
+            "convert_legacy_html": "/convert/pdf-to-html",
+            "convert_direct_html": "/convert/pdf-to-html-direct",
         },
     }
 

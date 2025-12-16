@@ -89,6 +89,44 @@ async def convert_pdf_to_html(request: ConvertPdfToHtmlRequest) -> Dict[str, Any
         logger.error(f"❌ Conversion routing error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.post("/convert/pdf-to-docx")
+async def convert_pdf_to_docx(request: ConvertPdfToHtmlRequest) -> Dict[str, Any]:
+    """
+    Route PDF to DOCX conversion to Converter Module (for ONLYOFFICE).
+    """
+    try:
+        logger.info(f"Routing PDF->DOCX conversion request to converter module: {request.filename}")
+
+        converter_service = config.SERVICES.get("converter")
+        if not converter_service:
+            raise HTTPException(status_code=500, detail="Converter service not registered")
+
+        converter_url = f"{converter_service['url']}{converter_service['endpoints']['pdf-to-docx']}"
+        response = requests.post(
+            converter_url,
+            json=request.dict(),
+            timeout=300,
+        )
+
+        if response.status_code == 200:
+            logger.info("PDF->DOCX conversion routed successfully")
+            return response.json()
+        else:
+            logger.error(f"Converter module returned error (pdf-to-docx): {response.status_code}")
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=response.json().get("detail", "PDF->DOCX conversion failed"),
+            )
+    except requests.exceptions.ConnectionError:
+        logger.error("Cannot connect to converter module (pdf-to-docx)")
+        raise HTTPException(status_code=503, detail="Converter service unavailable")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PDF->DOCX routing error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/convert/pdf-to-html-direct")
 async def convert_pdf_to_html_direct(request: ConvertPdfToHtmlRequest) -> Dict[str, Any]:
     """

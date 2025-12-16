@@ -31,7 +31,7 @@ export async function convertPdfToHtml(req: Request, res: Response): Promise<voi
     );
 
     // Call Python Manager API
-    const response = await axios.post(`${PYTHON_MANAGER_URL}/convert/pdf-to-html`, {
+    const response = await axios.post(`${PYTHON_MANAGER_URL}/convert/pdf-to-docx`, {
       user_id,
       upload_id,
       filename,
@@ -140,7 +140,7 @@ export async function convertBatch(req: Request, res: Response): Promise<void> {
       try {
         logger.info(`🔄 Converting file ${i + 1}/${files.length}: ${file.filename}`);
 
-        const response = await axios.post(`${PYTHON_MANAGER_URL}/convert/pdf-to-html`, {
+        const response = await axios.post(`${PYTHON_MANAGER_URL}/convert/pdf-to-docx`, {
           user_id: file.userId,
           upload_id: file.uploadId,
           filename: file.name,

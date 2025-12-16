@@ -49,6 +49,13 @@ const configSchema = z.object({
   MINIO_ACCESS_KEY: z.string().default('minioadmin'),
   MINIO_SECRET_KEY: z.string().default('minioadmin'),
   MINIO_BUCKET: z.string().default('wedocs'),
+  // Optional: public endpoint override for presigned URLs (e.g., host.docker.internal)
+  MINIO_PUBLIC_ENDPOINT: z.string().optional(),
+  MINIO_PUBLIC_PORT: z.coerce.number().optional(),
+  MINIO_PUBLIC_USE_SSL: z
+    .string()
+    .optional()
+    .transform((v) => (v ? v === 'true' || v === '1' : undefined)),
   // Python Manager URL
   PYTHON_MANAGER_URL: z.string().default('http://localhost:5000'),
 });
