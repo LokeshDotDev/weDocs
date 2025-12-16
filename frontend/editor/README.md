@@ -13,6 +13,7 @@ This folder contains the CKEditor 5 integration for the application.
 ## Setup
 
 1. Install CKEditor dependencies:
+
    ```bash
    npm install @ckeditor/ckeditor5-react @ckeditor/ckeditor5-build-decoupled-document
    ```
