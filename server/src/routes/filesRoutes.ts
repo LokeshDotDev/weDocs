@@ -126,4 +126,33 @@ router.get('/docx-proxy', async (req, res, next) => {
   }
 });
 
+// List all DOCX files for AI Detection and Humanizer
+router.get('/docx-list', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { minioClient } = await import('../lib/minio.js');
+    const { config } = await import('../lib/config.js');
+    const logger = (await import('../lib/logger.js')).default;
+
+    const files: any[] = [];
+    const stream = minioClient.listObjectsV2(config.MINIO_BUCKET, '', true);
+
+    for await (const obj of stream) {
+      if (obj.name && obj.name.toLowerCase().endsWith('.docx')) {
+        files.push({
+          key: obj.name,
+          name: obj.name.split('/').pop(),
+          size: obj.size,
+          lastModified: obj.lastModified,
+        });
+      }
+    }
+
+    logger.info(`Listed ${files.length} DOCX files from MinIO`);
+    res.json({ success: true, files, total: files.length });
+  } catch (error) {
+    console.error('Error listing DOCX files:', error);
+    next(error);
+  }
+});
+
 export default router;

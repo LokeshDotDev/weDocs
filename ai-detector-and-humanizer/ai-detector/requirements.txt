@@ -1,0 +1,9 @@
+sentencepiece
+transformers[torch]>=4.40.0
+datasets
+numpy
+gradio
+gradio_client
+scikit-learn
+seaborn
+pandas
