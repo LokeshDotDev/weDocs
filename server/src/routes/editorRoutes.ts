@@ -1,15 +1,27 @@
 import { Router } from 'express';
-import { getFileList, loadFile, saveFile } from '../controllers/editorController';
+import {
+  listUsers,
+  listUploads,
+  listFormattedFiles,
+  getFileList,
+  loadFile,
+  saveFile,
+} from '../controllers/editorController';
 
 const router = Router();
 
-// Get the list of files
-router.get('/files', getFileList);
+// Hierarchical selection: users -> uploads -> formatted files
+router.get('/users', listUsers);
+router.get('/uploads', listUploads);
+router.get('/files', listFormattedFiles);
 
-// Load a specific file
-router.get('/:fileId', loadFile);
+// Backward-compat endpoints for edited-files
+router.get('/edited/files', getFileList);
 
-// Save changes to a file
-router.patch('/:fileId', saveFile);
+// Load a specific edited file
+router.get('/edited/:fileId', loadFile);
+
+// Save changes to an edited file
+router.patch('/edited/:fileId', saveFile);
 
 export default router;

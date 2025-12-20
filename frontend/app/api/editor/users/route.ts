@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:3000";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:4000";
 
 export async function GET(_request: NextRequest) {
 	try {
-		const response = await fetch(`${API_BASE}/api/files/users`, {
+		const response = await fetch(`${API_BASE}/api/editor/users`, {
 			method: "GET",
 			headers: { "Content-Type": "application/json" },
 		});
