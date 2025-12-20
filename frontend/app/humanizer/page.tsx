@@ -6,6 +6,7 @@ import { Progress } from "@/components/ui/progress";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader, CheckCircle, Download, AlertCircle } from "lucide-react";
+import { DocumentPreview } from "@/components/humanizer/DocumentPreview";
 
 interface HumanizationResult {
 	fileKey: string;
@@ -252,6 +253,15 @@ export default function HumanizerPage() {
 											{Math.round(result.humanizedLength / 1000)}K chars
 										</p>
 									</div>
+								</div>
+
+								{/* Preview Section */}
+								<div className='pt-4'>
+									<DocumentPreview
+										originalFileKey={result.fileKey}
+										humanizedFileKey={result.outputFileKey}
+										fileName={result.fileName}
+									/>
 								</div>
 
 								{/* Download Button */}

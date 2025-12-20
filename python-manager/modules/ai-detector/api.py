@@ -114,11 +114,13 @@ def detect():
         prediction = bino.predict(text)
         
         # Calculate AI percentage (score closer to 1 = more AI-like)
-        ai_percentage = round(score * 100, 2)
-        is_ai_generated = score > 0.5
+        # Clamp score to [0,1] to avoid >100% readings
+        score_clamped = max(0.0, min(1.0, float(score)))
+        ai_percentage = round(score_clamped * 100, 2)
+        is_ai_generated = score_clamped > 0.5
         
         result = {
-            'score': round(score, 4),
+            'score': round(score_clamped, 4),
             'prediction': prediction,
             'isAIGenerated': is_ai_generated,
             'aiPercentage': ai_percentage
@@ -188,11 +190,12 @@ def batch_detect():
             try:
                 score = bino.compute_score(text)
                 prediction = bino.predict(text)
-                ai_percentage = round(score * 100, 2)
-                is_ai_generated = score > 0.5
+                score_clamped = max(0.0, min(1.0, float(score)))
+                ai_percentage = round(score_clamped * 100, 2)
+                is_ai_generated = score_clamped > 0.5
                 
                 results.append({
-                    'score': round(score, 4),
+                    'score': round(score_clamped, 4),
                     'prediction': prediction,
                     'isAIGenerated': is_ai_generated,
                     'aiPercentage': ai_percentage
@@ -224,7 +227,7 @@ if __name__ == '__main__':
     print("🚀 Starting Binoculars AI Detection API")
     print("=" * 60)
     print("")
-    print("📍 API will be available at: http://localhost:5000")
+    print("📍 API will be available at: http://localhost:5002")
     print("")
     print("Available endpoints:")
     print("  GET  /health        - Health check")
@@ -235,5 +238,5 @@ if __name__ == '__main__':
     print("   (Models will load on first request - ~10-25 seconds)")
     print("")
     
-    # Run Flask app
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    # Run Flask app on port 5002 (Python Manager uses 5000)
+    app.run(host='0.0.0.0', port=5002, debug=False)

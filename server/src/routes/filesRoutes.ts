@@ -155,4 +155,45 @@ router.get('/docx-list', async (req: Request, res: Response, next: NextFunction)
   }
 });
 
+// Preview endpoint: Extract text from DOCX for comparison
+router.get('/preview', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { fileKey } = req.query;
+    if (!fileKey || typeof fileKey !== 'string') {
+      res.status(400).json({ error: 'fileKey parameter is required' });
+      return;
+    }
+
+    const { minioClient } = await import('../lib/minio.js');
+    const { config } = await import('../lib/config.js');
+    const mammoth = await import('mammoth');
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const os = await import('node:os');
+    const { promisify } = await import('node:util');
+    const { pipeline } = await import('node:stream');
+
+    const pipelineAsync = promisify(pipeline);
+
+    // Download file to temp location
+    const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'preview-'));
+    const tmpFile = path.join(tmpDir, 'document.docx');
+
+    const stream = await minioClient.getObject(config.MINIO_BUCKET, fileKey);
+    await pipelineAsync(stream, fs.createWriteStream(tmpFile));
+
+    // Extract text using mammoth
+    const result = await mammoth.extractRawText({ path: tmpFile });
+
+    // Cleanup
+    await fs.promises.rm(tmpDir, { recursive: true, force: true });
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.send(result.value);
+  } catch (error) {
+    console.error('Error generating preview:', error);
+    next(error);
+  }
+});
+
 export default router;

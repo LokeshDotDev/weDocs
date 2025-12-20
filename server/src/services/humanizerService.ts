@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { pipeline } from 'node:stream';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile as execFileCb } from 'node:child_process';
+import axios from 'axios';
 import logger from '../lib/logger.js';
 
 interface HumanizationResult {
@@ -27,19 +27,9 @@ interface HumanizationJob {
   completedAt?: Date;
 }
 
-const DOCX_HUMANIZER_SCRIPT =
-  process.env['DOCX_HUMANIZER_SCRIPT'] ||
-  path.resolve(
-    process.cwd(),
-    '..',
-    'ai-detector-and-humanizer',
-    'humanizer',
-    'docx_humanize_lxml.py'
-  );
-const DOCX_HUMANIZER_PYTHON = process.env['DOCX_HUMANIZER_PYTHON'] || 'python';
-const DOCX_HUMANIZER_SKIP_DETECT = process.env['DOCX_HUMANIZER_SKIP_DETECT'] !== '0';
+const PYTHON_MANAGER_URL = process.env['PYTHON_MANAGER_URL'] || 'http://localhost:5000';
+const HUMANIZER_URL = process.env['HUMANIZER_URL'] || 'http://localhost:8000/humanize';
 
-const execFile = promisify(execFileCb);
 const pipelineAsync = promisify(pipeline);
 
 class HumanizerService {
@@ -51,15 +41,10 @@ class HumanizerService {
   }
 
   private async runDocxHumanizer(inputPath: string, outputPath: string): Promise<void> {
-    const args = [DOCX_HUMANIZER_SCRIPT, '--input', inputPath, '--output', outputPath];
-    if (DOCX_HUMANIZER_SKIP_DETECT) {
-      args.push('--skip-detect');
-    }
     logger.info(
       {
-        script: DOCX_HUMANIZER_SCRIPT,
-        python: DOCX_HUMANIZER_PYTHON,
-        skipDetect: DOCX_HUMANIZER_SKIP_DETECT,
+        pythonManagerUrl: PYTHON_MANAGER_URL,
+        humanizerUrl: HUMANIZER_URL,
         inputPath,
         outputPath,
       },
@@ -67,15 +52,22 @@ class HumanizerService {
     );
 
     try {
-      const { stdout, stderr } = await execFile(DOCX_HUMANIZER_PYTHON, args, {
-        maxBuffer: 1024 * 1024 * 10,
-      });
+      // Call Python Manager's /humanizer/humanize-docx endpoint
+      const response = await axios.post(
+        `${PYTHON_MANAGER_URL}/humanizer/humanize-docx`,
+        {
+          input_file_path: inputPath,
+          output_file_path: outputPath,
+          skip_detect: true,
+          humanizer_url: HUMANIZER_URL,
+        },
+        {
+          timeout: 600000, // 10 minutes
+        }
+      );
 
-      if (stdout) {
-        logger.info({ stdout }, '[runDocxHumanizer] stdout');
-      }
-      if (stderr) {
-        logger.warn({ stderr }, '[runDocxHumanizer] stderr');
+      if (response.data.stdout) {
+        logger.info({ stdout: response.data.stdout }, '[runDocxHumanizer] stdout');
       }
 
       logger.info('[runDocxHumanizer] completed');
