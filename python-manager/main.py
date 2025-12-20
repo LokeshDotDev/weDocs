@@ -164,6 +164,88 @@ async def convert_pdf_to_html_direct(request: ConvertPdfToHtmlRequest) -> Dict[s
         logger.error(f"❌ Direct conversion routing error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/ai-detection/detect")
+async def ai_detect(request: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Route AI detection request to AI Detector Module.
+    Expects: { "texts": ["text1", "text2", ...] }
+    Returns: { "results": [{ "text", "score", "label" }] }
+    """
+    try:
+        logger.info(f"🔍 Routing AI detection request")
+        
+        ai_detector_service = config.SERVICES.get("ai-detector")
+        if not ai_detector_service:
+            raise HTTPException(status_code=500, detail="AI Detector service not registered")
+        
+        detector_url = f"{ai_detector_service['url']}{ai_detector_service['endpoints']['detect']}"
+        response = requests.post(
+            detector_url,
+            json=request,
+            timeout=600,
+        )
+        
+        if response.status_code == 200:
+            logger.info(f"✅ AI detection completed")
+            return response.json()
+        else:
+            logger.error(f"❌ AI Detector returned error: {response.status_code}")
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=response.json().get("detail", "AI detection failed")
+            )
+    
+    except requests.exceptions.ConnectionError:
+        logger.error("❌ Cannot connect to AI Detector module")
+        raise HTTPException(status_code=503, detail="AI Detector service unavailable")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ AI detection routing error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/humanizer/humanize")
+async def humanize_text(request: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Route humanization request to Humanizer Module.
+    Expects: { "text": "some text", "mode": "standard" }
+    Returns: { "humanized_text": "...", "metrics": {...} }
+    """
+    try:
+        logger.info(f"✍️ Routing humanization request")
+        
+        humanizer_service = config.SERVICES.get("humanizer")
+        if not humanizer_service:
+            raise HTTPException(status_code=500, detail="Humanizer service not registered")
+        
+        humanizer_url = f"{humanizer_service['url']}{humanizer_service['endpoints']['humanize']}"
+        response = requests.post(
+            humanizer_url,
+            json=request,
+            timeout=300,
+        )
+        
+        if response.status_code == 200:
+            logger.info(f"✅ Humanization completed")
+            return response.json()
+        else:
+            logger.error(f"❌ Humanizer returned error: {response.status_code}")
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=response.json().get("detail", "Humanization failed")
+            )
+    
+    except requests.exceptions.ConnectionError:
+        logger.error("❌ Cannot connect to Humanizer module")
+        raise HTTPException(status_code=503, detail="Humanizer service unavailable")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Humanization routing error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/")
 async def root():
     """Root endpoint."""
@@ -176,6 +258,8 @@ async def root():
             "health": "/health",
             "convert/pdf-to-html": "/convert/pdf-to-html",
             "convert/pdf-to-html-direct": "/convert/pdf-to-html-direct",
+            "ai-detection/detect": "/ai-detection/detect",
+            "humanizer/humanize": "/humanizer/humanize",
         },
     }
 

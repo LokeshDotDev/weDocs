@@ -102,11 +102,15 @@ def detect():
             }), 400
         
         # Initialize Binoculars if needed
+        print("⏱️  [3%] Preparing models...", flush=True)
         bino = initialize_binoculars()
+        print("⏱️  [25%] Models ready", flush=True)
         
-        # Perform detection
-        print(f"🔍 Analyzing text ({len(text)} characters)...")
+        # Perform detection with staged progress logs
+        print(f"🔍 Analyzing text ({len(text)} characters)...", flush=True)
+        print("⏱️  [50%] Computing score...", flush=True)
         score = bino.compute_score(text)
+        print("⏱️  [85%] Predicting label...", flush=True)
         prediction = bino.predict(text)
         
         # Calculate AI percentage (score closer to 1 = more AI-like)
@@ -120,7 +124,7 @@ def detect():
             'aiPercentage': ai_percentage
         }
         
-        print(f"✅ Detection complete: {ai_percentage}% AI-generated")
+        print(f"✅ Detection complete: {ai_percentage}% AI-generated", flush=True)
         
         return jsonify(result)
     

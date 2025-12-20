@@ -3,8 +3,8 @@ from pydantic import BaseModel, Field
 from typing import Optional
 import re
 
-# Import processing helpers from the existing Streamlit page
-from pages.humanize_text import (
+# Import processing helpers from utils (Streamlit-free)
+from utils.humanize_core import (
     extract_citations,
     restore_citations,
     minimal_rewriting,

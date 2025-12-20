@@ -5,7 +5,9 @@ import {
 	ConversionLog,
 } from "../../lib/converter/types/converter-types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:3000";
+// Prefer same-origin proxy via Next.js rewrite; if API base is provided, use it
+const API_BASE =
+	process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_BACKEND_URL || "";
 
 interface UseFileConverterReturn {
 	files: MinIOFile[];
@@ -54,7 +56,9 @@ export function useFileConverter(): UseFileConverterReturn {
 
 			try {
 				const response = await fetch(
-					`${API_BASE}/api/files/list?userId=${userId}&stage=raw&fileType=pdf`
+					`${
+						API_BASE || ""
+					}/api/files/list?userId=${userId}&stage=raw&fileType=pdf`
 				);
 
 				if (!response.ok) {

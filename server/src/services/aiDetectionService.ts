@@ -32,8 +32,8 @@ interface BatchDetectionJob {
   completedAt?: Date;
 }
 
-const BINOCULARS_API_URL = process.env['BINOCULARS_API_URL'] || 'http://localhost:5000';
-const BINOCULARS_THRESHOLD = 0.9015; // Accuracy mode threshold
+const PYTHON_MANAGER_URL = process.env['PYTHON_MANAGER_URL'] || 'http://localhost:5000';
+const BINOCULARS_THRESHOLD = 0.7; // AI detection threshold
 
 class AIDetectionService {
   private minioClient: MinIOClient;
@@ -84,22 +84,21 @@ class AIDetectionService {
   }
 
   /**
-   * Call Binoculars API for detection
+   * Call Python Manager for AI detection (routes to AI Detector module)
    */
   async callBinoculars(text: string): Promise<{ score: number; prediction: string }> {
     try {
-      const response = await axios.post(`${BINOCULARS_API_URL}/detect`, {
+      const response = await axios.post(`${PYTHON_MANAGER_URL}/ai-detection/detect`, {
         text: text,
-        mode: 'accuracy', // Use accuracy mode for 95%+ F1
       });
 
       return {
-        score: response.data.score,
-        prediction: response.data.prediction, // "human" or "ai"
+        score: response.data.score || 0.5,
+        prediction: response.data.isAIGenerated ? 'ai' : 'human',
       };
     } catch (error) {
       console.error('[callBinoculars] Error:', error);
-      // Fallback if Binoculars is down
+      // Fallback if Python Manager is down
       return {
         score: 0.5,
         prediction: 'unknown',
@@ -127,21 +126,22 @@ class AIDetectionService {
 
         const detection = await this.callBinoculars(para);
 
-        // Convert score (0-1) to percentage
-        const aiPercentage = Math.round(detection.score * 100);
+        // Clamp score to [0,1] before converting to percentage
+        const scoreClamped = Math.min(Math.max(detection.score ?? 0, 0), 1);
+        const aiPercentage = Math.round(scoreClamped * 100);
         const humanPercentage = 100 - aiPercentage;
 
         segments.push({
           text: para.substring(0, 200) + '...', // Truncate for display
-          aiScore: detection.score,
+          aiScore: scoreClamped,
           aiPercentage,
           humanPercentage,
-          isAI: detection.score > BINOCULARS_THRESHOLD ? true : false,
+          isAI: scoreClamped > BINOCULARS_THRESHOLD ? true : false,
           startIndex: text.indexOf(para),
           endIndex: text.indexOf(para) + para.length,
         });
 
-        totalAIScore += detection.score;
+        totalAIScore += scoreClamped;
       }
 
       // Calculate overall percentages

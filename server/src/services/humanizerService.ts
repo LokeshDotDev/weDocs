@@ -168,21 +168,46 @@ class HumanizerService {
 
     logger.info({ jobId, fileCount: fileKeys.length }, '[batchHumanize] started');
 
-    // Process asynchronously
+    // Process asynchronously with controlled parallelism
     (async () => {
       try {
-        for (let i = 0; i < fileKeys.length; i++) {
-          const fileKey = fileKeys[i];
-          if (!fileKey) continue;
+        const concurrencyLimit = 3; // Process 3 files at once (adjust based on resources)
+        const results: HumanizationResult[] = [];
 
-          const result = await this.humanizeFile(fileKey);
-          job.results.push(result);
-          job.progress = Math.round(((i + 1) / fileKeys.length) * 100);
+        // Process in batches to control memory usage
+        for (let i = 0; i < fileKeys.length; i += concurrencyLimit) {
+          const batch = fileKeys.slice(i, i + concurrencyLimit).filter(Boolean);
+
+          logger.info(
+            { batchSize: batch.length, batchStart: i },
+            '[batchHumanize] processing batch'
+          );
+
+          // Process batch in parallel using Promise.allSettled (continues even if one fails)
+          const batchResults = await Promise.allSettled(
+            batch.map((fileKey) => this.humanizeFile(fileKey))
+          );
+
+          // Collect successful results
+          for (const result of batchResults) {
+            if (result.status === 'fulfilled') {
+              results.push(result.value);
+            } else {
+              logger.error({ error: result.reason }, '[batchHumanize] file failed in batch');
+            }
+          }
+
+          // Update progress after each batch
+          job.results = results;
+          job.progress = Math.round((results.length / fileKeys.length) * 100);
         }
 
         job.status = 'completed';
         job.completedAt = new Date();
-        logger.info({ jobId }, '[batchHumanize] completed');
+        logger.info(
+          { jobId, successCount: results.length, failCount: fileKeys.length - results.length },
+          '[batchHumanize] completed'
+        );
       } catch (error) {
         logger.error({ error, jobId }, '[batchHumanize] failed');
         job.status = 'failed';

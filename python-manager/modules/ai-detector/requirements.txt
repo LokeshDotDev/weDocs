@@ -1,7 +1,11 @@
+torch==2.2.2
+accelerate>=0.30.0
 sentencepiece
 transformers[torch]>=4.40.0
 datasets
-numpy
+numpy<2
+flask>=3.0.0
+flask-cors>=4.0.0
 gradio
 gradio_client
 scikit-learn

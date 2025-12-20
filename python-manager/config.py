@@ -21,15 +21,21 @@ class Config:
                 "health": "/health",
             }
         },
-        # Future services:
-        # "ai-detector": {
-        #     "url": "http://localhost:5002",
-        #     "endpoints": { "detect": "/detect", ... }
-        # },
-        # "humanizer": {
-        #     "url": "http://localhost:5003",
-        #     "endpoints": { "humanize": "/humanize", ... }
-        # }
+        "ai-detector": {
+            "url": os.getenv("AI_DETECTOR_MODULE_URL", "http://localhost:5002"),
+            "endpoints": {
+                "detect": "/detect",
+                "batch-detect": "/batch-detect",
+                "health": "/health",
+            }
+        },
+        "humanizer": {
+            "url": os.getenv("HUMANIZER_MODULE_URL", "http://localhost:8000"),
+            "endpoints": {
+                "humanize": "/humanize",
+                "health": "/health",
+            }
+        }
     }
 
 config = Config()
