@@ -24,50 +24,91 @@ export function DocumentPreview({
 	const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
 
 	useEffect(() => {
-		loadDocumentPreviews();
-	}, [originalFileKey, humanizedFileKey]);
+		const loadDocumentPreviews = async () => {
+			setLoading(true);
+			setError(null);
 
-	const loadDocumentPreviews = async () => {
-		setLoading(true);
-		setError(null);
+			try {
+				// Fetch both original and humanized text content
+				const [originalRes, humanizedRes] = await Promise.all([
+					fetch(
+						`${API_BASE}/api/files/preview?fileKey=${encodeURIComponent(
+							originalFileKey
+						)}`
+					),
+					fetch(
+						`${API_BASE}/api/files/preview?fileKey=${encodeURIComponent(
+							humanizedFileKey
+						)}`
+					),
+				]);
 
-		try {
-			// Fetch both original and humanized text content
-			const [originalRes, humanizedRes] = await Promise.all([
-				fetch(
-					`${API_BASE}/api/files/preview?fileKey=${encodeURIComponent(
-						originalFileKey
-					)}`
-				),
-				fetch(
-					`${API_BASE}/api/files/preview?fileKey=${encodeURIComponent(
-						humanizedFileKey
-					)}`
-				),
-			]);
+				if (!originalRes.ok || !humanizedRes.ok) {
+					throw new Error("Failed to load document previews");
+				}
 
-			if (!originalRes.ok || !humanizedRes.ok) {
-				throw new Error("Failed to load document previews");
+				const originalText = await originalRes.text();
+				const humanizedText = await humanizedRes.text();
+
+				setOriginalContent(originalText);
+				setHumanizedContent(humanizedText);
+			} catch (err) {
+				setError(
+					err instanceof Error ? err.message : "Failed to load previews"
+				);
+				console.error("Preview error:", err);
+			} finally {
+				setLoading(false);
 			}
+		};
 
-			const originalText = await originalRes.text();
-			const humanizedText = await humanizedRes.text();
-
-			setOriginalContent(originalText);
-			setHumanizedContent(humanizedText);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to load previews");
-			console.error("Preview error:", err);
-		} finally {
-			setLoading(false);
-		}
-	};
+		loadDocumentPreviews();
+	}, [originalFileKey, humanizedFileKey, API_BASE]);
 
 	const downloadFile = (fileKey: string, filename: string) => {
 		const downloadUrl = `${API_BASE}/api/files/download?fileKey=${encodeURIComponent(
 			fileKey
 		)}&filename=${encodeURIComponent(filename)}`;
 		window.open(downloadUrl, "_blank");
+	};
+
+	const handleRetry = () => {
+		setLoading(true);
+		setError(null);
+		const loadDocumentPreviews = async () => {
+			try {
+				const [originalRes, humanizedRes] = await Promise.all([
+					fetch(
+						`${API_BASE}/api/files/preview?fileKey=${encodeURIComponent(
+							originalFileKey
+						)}`
+					),
+					fetch(
+						`${API_BASE}/api/files/preview?fileKey=${encodeURIComponent(
+							humanizedFileKey
+						)}`
+					),
+				]);
+
+				if (!originalRes.ok || !humanizedRes.ok) {
+					throw new Error("Failed to load document previews");
+				}
+
+				const originalText = await originalRes.text();
+				const humanizedText = await humanizedRes.text();
+
+				setOriginalContent(originalText);
+				setHumanizedContent(humanizedText);
+			} catch (err) {
+				setError(
+					err instanceof Error ? err.message : "Failed to load previews"
+				);
+				console.error("Preview error:", err);
+			} finally {
+				setLoading(false);
+			}
+		};
+		loadDocumentPreviews();
 	};
 
 	if (loading) {
@@ -86,7 +127,7 @@ export function DocumentPreview({
 			<Card className='p-8'>
 				<div className='text-red-500 text-center'>
 					<p>Error: {error}</p>
-					<Button onClick={loadDocumentPreviews} className='mt-4'>
+					<Button onClick={handleRetry} className='mt-4'>
 						Retry
 					</Button>
 				</div>
