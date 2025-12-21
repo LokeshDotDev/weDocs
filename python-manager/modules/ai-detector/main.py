@@ -1,14 +1,19 @@
+import os
 from binoculars import Binoculars
 
-bino = Binoculars()
+# Prefer the small Falcon models by default to avoid 7B downloads on low disk.
+use_small = os.environ.get("BINOCULARS_SMALL_MODELS", "1") == "1"
 
-# ChatGPT (GPT-4) output when prompted with “Can you write a few sentences about a capybara that is an astrophysicist?"
-sample_string = '''Dr. Capy Cosmos, a capybara unlike any other, astounded the scientific community with his 
-groundbreaking research in astrophysics. With his keen sense of observation and unparalleled ability to interpret 
-cosmic data, he uncovered new insights into the mysteries of black holes and the origins of the universe. As he 
-peered through telescopes with his large, round eyes, fellow researchers often remarked that it seemed as if the 
-stars themselves whispered their secrets directly to him. Dr. Cosmos not only became a beacon of inspiration to 
-aspiring scientists but also proved that intellect and innovation can be found in the most unexpected of creatures.'''
+if use_small:
+	bino = Binoculars(
+		observer_name_or_path="tiiuae/falcon-rw-1b",
+		performer_name_or_path="tiiuae/falcon-rw-1b",
+		use_bfloat16=True,
+		mode="accuracy",
+	)
+else:
+	bino = Binoculars(mode="accuracy")
 
-print(bino.compute_score(sample_string))  # 0.75661373
-print(bino.predict(sample_string))  # 'Most likely AI-Generated'
+# Simple smoke test (kept lightweight; feel free to comment out)
+sample_string = "This is a short test sentence to verify the detector loads."
+print(bino.predict(sample_string))

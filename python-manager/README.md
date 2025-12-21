@@ -35,7 +35,7 @@ Each module is **standalone** and can be built in any framework (FastAPI, Flask,
 
 ```bash
 cd python-manager
-cp .env.example .env
+¸¸
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
