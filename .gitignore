@@ -2,3 +2,5 @@ huggingface_cache/
 .cache/
 *.safetensors
 venv/
+__pycache__/
+*.pyc
