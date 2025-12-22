@@ -34,6 +34,15 @@ class DocxHumanizeRequest(BaseModel):
     skip_detect: Optional[bool] = True
     humanizer_url: Optional[str] = "http://localhost:8000/humanize"
 
+class AnonymizeTextRequest(BaseModel):
+    text: str
+    name_pattern: Optional[str] = None
+    roll_pattern: Optional[str] = None
+
+class AnonymizeDocxRequest(BaseModel):
+    input_file_path: str
+    output_file_path: str
+
 # Routes
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
@@ -55,6 +64,40 @@ async def health_check():
         "version": config.APP_VERSION,
         "services": service_health,
     }
+
+@app.post("/reductor/anonymize-text")
+async def reductor_anonymize_text(request: AnonymizeTextRequest) -> Dict[str, Any]:
+    try:
+        logger.info("🧹 Routing text anonymization to reductor")
+        svc = config.SERVICES.get("reductor")
+        if not svc:
+            raise HTTPException(status_code=500, detail="Reductor service not registered")
+        url = f"{svc['url']}{svc['endpoints']['anonymize-text']}"
+        resp = requests.post(url, json=request.dict(), timeout=120)
+        if resp.status_code == 200:
+            return resp.json()
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    except requests.exceptions.ConnectionError:
+        raise HTTPException(status_code=503, detail="Reductor service unavailable")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/reductor/anonymize-docx")
+async def reductor_anonymize_docx(request: AnonymizeDocxRequest) -> Dict[str, Any]:
+    try:
+        logger.info("🧹 Routing DOCX anonymization to reductor")
+        svc = config.SERVICES.get("reductor")
+        if not svc:
+            raise HTTPException(status_code=500, detail="Reductor service not registered")
+        url = f"{svc['url']}{svc['endpoints']['anonymize-docx']}"
+        resp = requests.post(url, json=request.dict(), timeout=600)
+        if resp.status_code == 200:
+            return resp.json()
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    except requests.exceptions.ConnectionError:
+        raise HTTPException(status_code=503, detail="Reductor service unavailable")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/convert/pdf-to-html")
 async def convert_pdf_to_html(request: ConvertPdfToHtmlRequest) -> Dict[str, Any]:

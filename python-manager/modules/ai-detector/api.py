@@ -4,24 +4,41 @@ Provides REST endpoint for the backend to detect AI-generated text
 """
 import os
 import sys
+import pathlib
 
-# Set HuggingFace cache to D: drive (more space than C:)
-# IMPORTANT: Set this BEFORE importing any HuggingFace libraries
-os.environ['HF_HOME'] = r'D:\huggingface_cache'
-os.environ['TRANSFORMERS_CACHE'] = r'D:\huggingface_cache\transformers'
-os.environ['HF_DATASETS_CACHE'] = r'D:\huggingface_cache\datasets'
-os.environ['HF_OFFLOAD_FOLDER'] = r'D:\huggingface_cache\offload'
+# Prefer existing HF_* envs; if not set and running on macOS, fallback to external SSD cache if present
+if not os.environ.get("HF_HOME"):
+    if sys.platform == "darwin":
+        candidate = pathlib.Path("/Volumes/Vivek Data/hf-cache")
+        if candidate.exists():
+            os.environ['HF_HOME'] = str(candidate)
+            os.environ['TRANSFORMERS_CACHE'] = str(candidate / "transformers")
+            os.environ['HF_DATASETS_CACHE'] = str(candidate / "datasets")
+            os.environ['HF_OFFLOAD_FOLDER'] = str(candidate / "offload")
 
 print("=" * 60)
 print("📦 HuggingFace Cache Location")
 print("=" * 60)
-print(f"   Cache directory: {os.environ['HF_HOME']}")
-print(f"   Models will be stored on D: drive (more space)")
+print(f"   Cache directory: {os.environ.get('HF_HOME', '(default)')}")
 print("=" * 60)
 print()
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+try:
+    import torch
+    # Use all CPU threads unless explicitly limited
+    cpu_threads = max(1, os.cpu_count() or 1)
+    torch.set_num_threads(cpu_threads)
+    if hasattr(torch, "set_num_interop_threads"):
+        torch.set_num_interop_threads(max(1, (os.cpu_count() or 1) // 2))
+    # Enable MPS fallback if available on Apple Silicon
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+    print(f"⚙️  Torch threads: {torch.get_num_threads()} (interop: {getattr(torch, 'get_num_interop_threads', lambda: 'n/a')() if hasattr(torch, 'get_num_interop_threads') else 'n/a'})")
+    if getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available():
+        print("🚀 MPS (Apple GPU) is available – PyTorch will offload compatible ops.")
+except Exception as _torch_err:
+    print(f"ℹ️  Torch not tuned: {_torch_err}")
 
 # Add the binoculars module to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -110,8 +127,10 @@ def detect():
         print(f"🔍 Analyzing text ({len(text)} characters)...", flush=True)
         print("⏱️  [50%] Computing score...", flush=True)
         score = bino.compute_score(text)
-        print("⏱️  [85%] Predicting label...", flush=True)
-        prediction = bino.predict(text)
+        print("⏱️  [85%] Deriving label...", flush=True)
+        # Derive prediction from score using Binoculars threshold to avoid recomputation
+        threshold = getattr(bino, 'threshold', 0.5)
+        prediction = "Most likely human-generated" if float(score) >= float(threshold) else "Most likely AI-generated"
         
         # Calculate AI percentage (score closer to 1 = more AI-like)
         # Clamp score to [0,1] to avoid >100% readings
@@ -172,48 +191,43 @@ def batch_detect():
         # Initialize Binoculars if needed
         bino = initialize_binoculars()
         
-        # Process each text
+        # Prefer true batched inference for significant speedups
+        print(f"🔍 Analyzing {len(texts)} texts (batched)...")
+        try:
+            scores = bino.compute_score(texts)
+        except Exception as e:
+            print(f"❌ Error during batched compute: {e}. Falling back to per-text.")
+            scores = []
+            for t in texts:
+                try:
+                    scores.append(bino.compute_score(t))
+                except Exception as ie:
+                    scores.append(None)
+
+        threshold = getattr(bino, 'threshold', 0.5)
         results = []
-        print(f"🔍 Analyzing {len(texts)} texts...")
-        
-        for i, text in enumerate(texts):
-            if not text or len(text.strip()) == 0:
+        for s in scores:
+            if s is None:
                 results.append({
-                    'error': 'Empty text',
+                    'error': 'scoring_failed',
                     'score': None,
                     'prediction': None,
                     'isAIGenerated': None,
                     'aiPercentage': None
                 })
                 continue
-            
-            try:
-                score = bino.compute_score(text)
-                prediction = bino.predict(text)
-                score_clamped = max(0.0, min(1.0, float(score)))
-                ai_percentage = round(score_clamped * 100, 2)
-                is_ai_generated = score_clamped > 0.5
-                
-                results.append({
-                    'score': round(score_clamped, 4),
-                    'prediction': prediction,
-                    'isAIGenerated': is_ai_generated,
-                    'aiPercentage': ai_percentage
-                })
-                
-                print(f"  [{i+1}/{len(texts)}] {ai_percentage}% AI-generated")
-                
-            except Exception as e:
-                results.append({
-                    'error': str(e),
-                    'score': None,
-                    'prediction': None,
-                    'isAIGenerated': None,
-                    'aiPercentage': None
-                })
-        
-        print(f"✅ Batch detection complete")
-        
+            s_clamped = max(0.0, min(1.0, float(s)))
+            ai_pct = round(s_clamped * 100, 2)
+            pred = "Most likely human-generated" if s_clamped >= float(threshold) else "Most likely AI-generated"
+            results.append({
+                'score': round(s_clamped, 4),
+                'prediction': pred,
+                'isAIGenerated': s_clamped > 0.5,
+                'aiPercentage': ai_pct
+            })
+
+        print(f"✅ Batch detection complete (batched path)")
+
         return jsonify({'results': results})
     
     except Exception as e:
@@ -227,7 +241,7 @@ if __name__ == '__main__':
     print("🚀 Starting Binoculars AI Detection API")
     print("=" * 60)
     print("")
-    print("📍 API will be available at: http://localhost:5002")
+    print("📍 API will be available at: http://localhost:5003")
     print("")
     print("Available endpoints:")
     print("  GET  /health        - Health check")
@@ -238,5 +252,5 @@ if __name__ == '__main__':
     print("   (Models will load on first request - ~10-25 seconds)")
     print("")
     
-    # Run Flask app on port 5002 (Python Manager uses 5000)
-    app.run(host='0.0.0.0', port=5002, debug=False)
+    # Run Flask app on port 5003 (Python Manager uses 5000)
+    app.run(host='0.0.0.0', port=5003, debug=False)
