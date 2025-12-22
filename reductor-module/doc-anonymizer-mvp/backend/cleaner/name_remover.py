@@ -3,6 +3,7 @@ name_remover.py
 
 Safely removes student name from document.xml.
 Handles names in separate nodes and labeled fields.
+Preserves document structure (tables, paragraphs) at all times.
 """
 
 import re
@@ -13,57 +14,64 @@ WORD_NAMESPACE = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/
 
 def remove_student_name(document_tree: etree._ElementTree, name: str):
     """
-    Remove student name from document across potentially separate text nodes.
+    Remove student name from document by clearing ONLY text node content.
+    NEVER delete paragraphs or table cells—just empty their text.
     
     Strategy:
-    1. Remove the exact name as a standalone value in a node (e.g., node contains "SHIKHA VALECHA ")
-    2. Remove labeled field patterns (e.g., "NAME Shikha Valecha" within same node)
-    3. Remove the name anywhere else it appears (global removal with word boundaries)
+    1. Standalone name nodes (contain only the name) → clear to ""
+    2. Labeled fields (NAME + value in same node) → remove just the name part
+    3. Global matches (name appearing in body text) → remove with word boundaries
     
-    Example:
-    Input nodes: ['NAME ', 'SHIKHA VALECHA ', 'PROGRAM']
-    Output nodes: ['NAME ', '', 'PROGRAM']  (or ['', '', 'PROGRAM'] depending on settings)
-    
-    Input text: "I, Shikha Valecha, declare"
-    Output text: "I, , declare"
+    Example transformations:
+    'SHIKHA VALECHA '         → ''
+    'NAME Shikha Valecha'     → 'NAME '
+    'I, Shikha Valecha, say'  → 'I, , say'
     """
     if not name or not name.strip():
         return
 
-    # Create patterns
     escaped_name = re.escape(name)
     
-    # Pattern 1: Exact standalone name in a node (with optional whitespace)
-    standalone_pattern = re.compile(
-        r'^\s*' + escaped_name + r'\s*$',
-        re.IGNORECASE
-    )
-    
-    # Pattern 2: Labeled field (NAME/ROLL/etc. followed by the name in same node)
+    # Pattern 1: Label followed by name (remove only the name part, keep label)
     label_pattern = re.compile(
         r'(NAME|STUDENT\s+NAME|SUBMITTED\s+BY|SIGNED\s+BY|AUTHOR)\s*:?\s*' + escaped_name,
         re.IGNORECASE
     )
     
-    # Pattern 3: Name anywhere in text with word boundaries
+    # Pattern 2: Node contains ONLY the name (possibly with whitespace)
+    standalone_pattern = re.compile(
+        r'^\s*' + escaped_name + r'\s*$',
+        re.IGNORECASE
+    )
+    
+    # Pattern 3: Name with word boundaries (for body text removal)
     global_pattern = re.compile(
         r'\b' + escaped_name + r'\b',
         re.IGNORECASE
     )
 
-    for node in document_tree.xpath("//w:t", namespaces=WORD_NAMESPACE):
-        if node.text:
-            original_text = node.text
-            
-            # Phase 1: Check if node is ONLY the student name (e.g., "SHIKHA VALECHA ")
-            if standalone_pattern.match(original_text):
-                node.text = ""
-                continue  # Skip other patterns for this node
-            
-            # Phase 2: Remove labeled field occurrences
-            modified_text = label_pattern.sub("", original_text)
-            
-            # Phase 3: Remove global name matches
-            modified_text = global_pattern.sub("", modified_text)
-            
-            node.text = modified_text if modified_text else ""
+    # Process all text nodes
+    for text_node in document_tree.xpath("//w:t", namespaces=WORD_NAMESPACE):
+        if not text_node.text:
+            continue
+
+        original_text = text_node.text
+
+        # Priority 1: If node is ONLY the name (e.g., "SHIKHA VALECHA "), clear it
+        if standalone_pattern.match(original_text):
+            text_node.text = ""
+            print(f"    ✂️ Cleared name node: '{original_text.strip()}'")
+            continue
+
+        # Priority 2: Remove labeled field pattern (NAME Shikha Valecha → NAME )
+        modified_text = label_pattern.sub(r'\1 ', original_text)
+        if modified_text != original_text:
+            text_node.text = modified_text
+            print(f"    ✂️ Removed from label: '{original_text.strip()}' → '{modified_text.strip()}'")
+            continue
+
+        # Priority 3: Remove global name matches (case-insensitive exact phrase)
+        modified_text = global_pattern.sub("", original_text)
+        if modified_text != original_text:
+            text_node.text = modified_text if modified_text else ""
+            print(f"    ✂️ Removed global match: '{original_text.strip()}' → '{modified_text.strip()}'")

@@ -48,12 +48,21 @@ def detect_identity(document_tree: etree._ElementTree) -> dict:
     # Phase 1: Pattern-based detection on full joined text (HIGH CONFIDENCE)
     # Pattern: "NAME Shikha Valecha" or "ROLL NUMBER 251410503051"
     
-    # Try to match NAME followed by a capitalized phrase (case-insensitive label)
+    # Try to match NAME followed by exactly 2 capitalized words (typical: "FirstName LastName")
+    # Use negative lookahead to avoid eating next field label (PROGRAM, SEMESTER, etc.)
     name_pattern = re.compile(
-        r'(?:NAME|STUDENT NAME|SUBMITTED BY|AUTHOR|SIGNED BY)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)',
+        r'(?:NAME|STUDENT NAME|SUBMITTED BY|AUTHOR|SIGNED BY)\s+([A-Z][a-z]+\s+[A-Z][a-z]+)(?:\s+(?:PROGRAM|SEMESTER|COURSE|ROLL|INSTITUTION|DEPARTMENT|YEAR|BATCH|CLASS))',
         re.IGNORECASE
     )
     name_match = name_pattern.search(full_text)
+    if not name_match:
+        # Fallback: match NAME followed by 2 words, stop at next capital+space
+        name_pattern = re.compile(
+            r'(?:NAME|STUDENT NAME|SUBMITTED BY|AUTHOR|SIGNED BY)\s+([A-Z][a-z]+\s+[A-Z][a-z]+)',
+            re.IGNORECASE
+        )
+        name_match = name_pattern.search(full_text)
+    
     if name_match:
         detected_name = name_match.group(1).strip()
         confidence = "HIGH"
