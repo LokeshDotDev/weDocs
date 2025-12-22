@@ -35,21 +35,37 @@ def unzip_docx(docx_path: str) -> str:
 def load_xml(xml_path: str) -> etree._ElementTree:
     """
     Load an XML file using lxml and return the parsed tree.
+    Uses strict parser settings to preserve ALL whitespace and formatting.
     """
-    parser = etree.XMLParser(remove_blank_text=False)
+    parser = etree.XMLParser(
+        remove_blank_text=False,
+        strip_cdata=False,
+        resolve_entities=False,
+        remove_comments=False,
+        remove_pis=False,
+        huge_tree=False,
+        collect_ids=False
+    )
     return etree.parse(xml_path, parser)
 
 
 def save_xml(tree: etree._ElementTree, xml_path: str):
     """
-    Save XML tree back to file without formatting changes.
+    Save XML with ABSOLUTE ZERO reformatting.
+    Uses tostring to get bytes, then writes directly.
     """
-    tree.write(
-        xml_path,
-        encoding="UTF-8",
+    # Get the XML as bytes with minimal transformation
+    xml_bytes = etree.tostring(
+        tree,
+        encoding='UTF-8',
         xml_declaration=True,
-        standalone="yes"
+        pretty_print=False,
+        method='xml'
     )
+    
+    # Write bytes directly - no further processing
+    with open(xml_path, 'wb') as f:
+        f.write(xml_bytes)
 
 
 def zip_docx(extracted_dir: str, output_docx: str):

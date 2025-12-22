@@ -15,63 +15,32 @@ WORD_NAMESPACE = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/
 def remove_student_name(document_tree: etree._ElementTree, name: str):
     """
     Remove student name from document by clearing ONLY text node content.
-    NEVER delete paragraphs or table cells—just empty their text.
+    ULTRA-CONSERVATIVE: Only clear nodes where text EXACTLY equals the name.
     
-    Strategy:
-    1. Standalone name nodes (contain only the name) → clear to ""
-    2. Labeled fields (NAME + value in same node) → remove just the name part
-    3. Global matches (name appearing in body text) → remove with word boundaries
+    NEVER:
+    - Use regex substitution (breaks spacing/structure)
+    - Modify labeled fields  
+    - Remove from body text (to preserve paragraph structure)
     
-    Example transformations:
-    'SHIKHA VALECHA '         → ''
-    'NAME Shikha Valecha'     → 'NAME '
-    'I, Shikha Valecha, say'  → 'I, , say'
+    ONLY:
+    - Find cells/runs that contain the name EXACTLY
+    - Clear them completely (preserve cell structure)
+    
+    This preserves table alignment and spacing perfectly.
     """
     if not name or not name.strip():
         return
 
-    escaped_name = re.escape(name)
+    name_clean = name.strip()
     
-    # Pattern 1: Label followed by name (remove only the name part, keep label)
-    label_pattern = re.compile(
-        r'(NAME|STUDENT\s+NAME|SUBMITTED\s+BY|SIGNED\s+BY|AUTHOR)\s*:?\s*' + escaped_name,
-        re.IGNORECASE
-    )
-    
-    # Pattern 2: Node contains ONLY the name (possibly with whitespace)
-    standalone_pattern = re.compile(
-        r'^\s*' + escaped_name + r'\s*$',
-        re.IGNORECASE
-    )
-    
-    # Pattern 3: Name with word boundaries (for body text removal)
-    global_pattern = re.compile(
-        r'\b' + escaped_name + r'\b',
-        re.IGNORECASE
-    )
-
-    # Process all text nodes
+    # Only clear text nodes that EXACTLY match the name (with flexible whitespace)
     for text_node in document_tree.xpath("//w:t", namespaces=WORD_NAMESPACE):
         if not text_node.text:
             continue
 
-        original_text = text_node.text
-
-        # Priority 1: If node is ONLY the name (e.g., "SHIKHA VALECHA "), clear it
-        if standalone_pattern.match(original_text):
+        node_text = text_node.text.strip()
+        
+        # Only clear if text node is EXACTLY the name (case-insensitive)
+        if node_text.lower() == name_clean.lower():
             text_node.text = ""
-            print(f"    ✂️ Cleared name node: '{original_text.strip()}'")
-            continue
-
-        # Priority 2: Remove labeled field pattern (NAME Shikha Valecha → NAME )
-        modified_text = label_pattern.sub(r'\1 ', original_text)
-        if modified_text != original_text:
-            text_node.text = modified_text
-            print(f"    ✂️ Removed from label: '{original_text.strip()}' → '{modified_text.strip()}'")
-            continue
-
-        # Priority 3: Remove global name matches (case-insensitive exact phrase)
-        modified_text = global_pattern.sub("", original_text)
-        if modified_text != original_text:
-            text_node.text = modified_text if modified_text else ""
-            print(f"    ✂️ Removed global match: '{original_text.strip()}' → '{modified_text.strip()}'")
+            print(f"    ✂️ Cleared name cell: '{node_text}'")

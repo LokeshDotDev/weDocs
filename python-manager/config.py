@@ -30,7 +30,7 @@ class Config:
             }
         },
         "ai-detector": {
-            "url": os.getenv("AI_DETECTOR_MODULE_URL", "http://localhost:5002"),
+            "url": os.getenv("AI_DETECTOR_MODULE_URL", "http://localhost:5003"),
             "endpoints": {
                 "detect": "/detect",
                 "batch-detect": "/batch-detect",
