@@ -22,6 +22,9 @@ from backend.identity.detector import detect_identity
 from backend.identity.confidence import assess_confidence
 from backend.cleaner.name_remover import remove_student_name
 from backend.cleaner.rollno_remover import remove_roll_number
+# Formatting disabled for now
+# from backend.formatter.formatter import apply_formatting, enforce_run_fonts
+# from backend.formatter.enforce_paragraph_formatting import enforce_paragraph_formatting
 
 
 def process_docx(input_docx: str, output_docx: str):
@@ -62,7 +65,12 @@ def process_docx(input_docx: str, output_docx: str):
             remove_student_name(document_tree, identity["name"])
             print(f"✂️ Removed student name: {identity['name']}")
 
-        # Phase 4: Save XML and rezip
+        # Phase 4: Formatting disabled - will be added later
+        # apply_formatting(temp_dir)
+        # enforce_run_fonts(document_tree)
+        # enforce_paragraph_formatting(document_tree)
+
+        # Phase 5: Save XML and rezip
         save_xml(document_tree, document_xml_path)
         zip_docx(temp_dir, output_docx)
         print(f"✅ Anonymized DOCX saved: {output_docx}")
