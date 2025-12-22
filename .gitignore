@@ -1,3 +1,4 @@
 huggingface_cache/
 .cache/
 *.safetensors
+venv/
