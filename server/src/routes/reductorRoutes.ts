@@ -8,6 +8,7 @@ import os from 'os';
 const router = Router();
 
 const MANAGER_URL = process.env.PYTHON_MANAGER_URL || 'http://localhost:5002';
+const REDUCTOR_SERVICE_V2_URL = process.env.REDUCTOR_SERVICE_V2_URL || 'http://localhost:5018';
 const MINIO_BUCKET = process.env.MINIO_BUCKET || 'wedocs';
 
 // List all DOCX files from MinIO
@@ -56,9 +57,9 @@ router.post('/anonymize-file', async (req, res) => {
     // Download DOCX from MinIO
     await minioClient.fGetObject(MINIO_BUCKET, fileKey, inputPath);
 
-    // Call reductor service to anonymize
+    // Call reductor service V2 to anonymize
     const resp = await axios.post(
-      `${MANAGER_URL}/reductor/anonymize-docx`,
+      `${REDUCTOR_SERVICE_V2_URL}/anonymize-docx`,
       {
         input_file_path: inputPath,
         output_file_path: outputPath,

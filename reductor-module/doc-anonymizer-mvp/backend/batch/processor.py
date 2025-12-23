@@ -1,88 +1,73 @@
 """
 processor.py
 
-Coordinates the full pipeline:
+New ultra-conservative pipeline:
 - unzip DOCX
-- load XML
-- detect identity
-- remove identity by clearing ONLY exact matching text nodes
-- save XML with ZERO reformatting
+- parse XML ONLY for detection (read-only)
+- remove name/roll with byte-level replacements in document.xml
+- never re-serialize XML (avoids any formatting/alignment change)
 - rezip DOCX
 """
 
 import os
-from backend.utils.docx_utils import (
-    unzip_docx,
-    load_xml,
-    save_xml,
-    zip_docx,
-    cleanup_temp_dir
-)
+import re
+
+from backend.utils.docx_utils import unzip_docx, load_xml, zip_docx, cleanup_temp_dir
 from backend.identity.detector import detect_identity
 from backend.identity.confidence import assess_confidence
-from lxml import etree
 
-WORD_NAMESPACE = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-# Formatting disabled for now
-# from backend.formatter.formatter import apply_formatting, enforce_run_fonts
-# from backend.formatter.enforce_paragraph_formatting import enforce_paragraph_formatting
+
+def _remove_value_bytes(xml_bytes: bytes, value: str) -> bytes:
+    """
+    Remove value from XML bytes while preserving all formatting.
+    Tries to clear the text inside <w:t>...</w:t> without touching tags.
+    Falls back to raw byte replacement if no tag-wrapped match is found.
+    """
+    if not value or not value.strip():
+        return xml_bytes
+
+    val = value.strip().encode("utf-8")
+
+    # Pattern: <w:t ...>VALUE</w:t>
+    pattern = b"(<w:t[^>]*>)" + re.escape(val) + b"(</w:t>)"
+    replaced = re.sub(pattern, b"\\1\\2", xml_bytes, flags=re.IGNORECASE)
+
+    if replaced != xml_bytes:
+        return replaced
+
+    # Fallback: raw byte replace (last resort, still preserves formatting)
+    return xml_bytes.replace(val, b"")
 
 
 def process_docx(input_docx: str, output_docx: str):
-    """
-    Anonymize DOCX using BINARY string replacement.
-    Works at byte level - preserves EVERY character including whitespace.
-    """
     temp_dir = unzip_docx(input_docx)
 
     try:
         document_xml_path = os.path.join(temp_dir, "word/document.xml")
-        
-        # Phase 1: Parse ONLY to detect (read-only)
+
+        # Phase 1: detect identity (read-only parse)
         document_tree = load_xml(document_xml_path)
         identity = detect_identity(document_tree)
-        print(f"🔍 Detected: name={identity.get('name')}, roll={identity.get('roll_no')}")
-        
-        # Phase 2: Assess confidence
         confidence = assess_confidence(identity)
-        print(f"✅ Confidence: remove_name={confidence['remove_name']}, remove_roll={confidence['remove_roll_no']}")
 
-        # Phase 3: Read XML as BINARY (preserves every byte)
-        with open(document_xml_path, 'rb') as f:
+        # Phase 2: read XML as bytes (preserve every byte)
+        with open(document_xml_path, "rb") as f:
             xml_bytes = f.read()
-        
-        original_bytes = xml_bytes
-        
-        # Phase 4: Do byte-level replacement
-        if confidence["remove_roll_no"] and identity.get("roll_no"):
-            roll_no = identity["roll_no"].strip()
-            # Convert to bytes for replacement
-            roll_bytes = roll_no.encode('utf-8')
-            # Find and replace within <w:t> tags
-            import re
-            pattern = b'(<w:t[^>]*>)' + re.escape(roll_bytes) + b'(</w:t>)'
-            replacement = b'\\1\\2'  # Keep tags, remove text
-            xml_bytes = re.sub(pattern, replacement, xml_bytes)
-            print(f"✂️ Removed roll: '{roll_no}'")
 
-        if confidence["remove_name"] and identity.get("name"):
-            name = identity["name"].strip()
-            name_bytes = name.encode('utf-8')
-            # Case-insensitive: try exact case first, then variations
-            pattern = b'(<w:t[^>]*>)' + re.escape(name_bytes) + b'(</w:t>)'
-            replacement = b'\\1\\2'
-            xml_bytes = re.sub(pattern, replacement, xml_bytes, flags=re.IGNORECASE)
-            print(f"✂️ Removed name: '{name}'")
+        # Phase 3: remove roll number
+        if confidence.get("remove_roll_no") and identity.get("roll_no"):
+            xml_bytes = _remove_value_bytes(xml_bytes, identity["roll_no"])
 
-        # Phase 5: Write back as BINARY (preserves every byte)
-        if xml_bytes != original_bytes:
-            with open(document_xml_path, 'wb') as f:
-                f.write(xml_bytes)
-            print(f"💾 Binary replacement done (100% alignment preserved)")
-        
-        # Phase 6: Rezip
+        # Phase 4: remove name
+        if confidence.get("remove_name") and identity.get("name"):
+            xml_bytes = _remove_value_bytes(xml_bytes, identity["name"])
+
+        # Phase 5: write bytes back
+        with open(document_xml_path, "wb") as f:
+            f.write(xml_bytes)
+
+        # Phase 6: rezip DOCX
         zip_docx(temp_dir, output_docx)
-        print(f"✅ Complete: {output_docx}")
 
     finally:
         cleanup_temp_dir(temp_dir)
