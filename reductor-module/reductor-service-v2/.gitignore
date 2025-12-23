@@ -1,0 +1,12 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Temp files
+tmp/
+*.docx
+*.pdf
+
+# OS
+.DS_Store

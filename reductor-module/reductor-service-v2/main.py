@@ -90,24 +90,12 @@ def anonymize(req: AnonymizeRequest):
 
         # Step 3: Detect identity BEFORE
         logger.info("\n[3/6] Detecting student identity (BEFORE anonymization)...")
-        tree_before = load_xml(converted_path.replace(".docx", "/word/document.xml"))
-        if not os.path.exists(converted_path.replace(".docx", "/word/document.xml")):
-            # Need to unzip first
-            from utils.docx_anonymizer import unzip_docx, load_xml as load_xml_utils
-            import shutil
-            temp_unzip = unzip_docx(converted_path)
-            tree_before = load_xml_utils(os.path.join(temp_unzip, "word/document.xml"))
-            shutil.rmtree(temp_unzip)
-        else:
-            tree_before = load_xml(converted_path.replace(".docx", "/word/document.xml"))
-        
-        # Simpler: just unzip and detect
-        from utils.docx_anonymizer import unzip_docx as unzip_func
+        from utils.docx_anonymizer import unzip_docx
+        import shutil
         temp_unzip = unzip_docx(converted_path)
         tree_before = load_xml(os.path.join(temp_unzip, "word/document.xml"))
         identity_before = detect_identity(tree_before)
         logger.info(f"✅ Detected: {identity_before}")
-        import shutil
         shutil.rmtree(temp_unzip)
 
         # Step 4: Anonymize

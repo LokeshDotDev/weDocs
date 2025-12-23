@@ -83,7 +83,9 @@ def _remove_value_from_text_nodes(docx_path: str, value: str) -> int:
             
             # Clear if EXACT match (case-insensitive for names)
             if node_text.lower() == val_clean.lower():
-                text_node.text = ""
+                # Use NBSP to preserve layout and bullet rendering in Word
+                # Regular spaces can sometimes affect glyph fallback; NBSP is safer
+                text_node.text = "\u00A0"
                 removed_count += 1
                 logger.info(f"    ✂️  Cleared text node: '{node_text}'")
         
@@ -120,9 +122,10 @@ def _remove_value_byte_level(docx_path: str, value: str) -> int:
             xml_bytes = f.read()
         
         val_bytes = value.strip().encode("utf-8")
+        # Replace with NBSP to preserve structure and bullet rendering
         pattern = b"(<w:t[^>]*>)" + re.escape(val_bytes) + b"(</w:t>)"
         
-        replaced = re.sub(pattern, b"\\1\\2", xml_bytes, flags=re.IGNORECASE)
+        replaced = re.sub(pattern, b"\\1\xC2\xA0\\2", xml_bytes, flags=re.IGNORECASE)
         
         bytes_removed = len(xml_bytes) - len(replaced)
         
@@ -133,6 +136,61 @@ def _remove_value_byte_level(docx_path: str, value: str) -> int:
         
         zip_docx(temp_dir, docx_path)
         return bytes_removed
+    finally:
+        import shutil
+        shutil.rmtree(temp_dir)
+
+
+def _fix_bullet_formatting(docx_path: str) -> int:
+    """
+    Fix bullet formatting by changing Symbol/Wingdings fonts to normal fonts.
+    
+    PDF converters often use Symbol font for bullets, which renders as squares in Word.
+    This changes the font to Arial/Calibri so bullets display correctly.
+    
+    Returns: number of runs fixed
+    """
+    temp_dir = unzip_docx(docx_path)
+    try:
+        document_xml = os.path.join(temp_dir, "word/document.xml")
+        tree = load_xml(document_xml)
+        root = tree.getroot()
+        
+        fixed = 0
+        
+        # Find all runs with Symbol/Wingdings fonts
+        for run in root.xpath("//w:r", namespaces=WORD_NAMESPACE):
+            rPr = run.find("w:rPr", WORD_NAMESPACE)
+            if rPr is None:
+                continue
+            
+            # Check font
+            fonts = rPr.find("w:rFonts", WORD_NAMESPACE)
+            if fonts is None:
+                continue
+            
+            # Get the font names
+            ascii_font = fonts.get(f"{{{WORD_NAMESPACE['w']}}}ascii", "")
+            
+            # If it's Symbol or Wingdings, change to Arial
+            if ascii_font in ['Symbol', 'Wingdings', 'Webdings', 'MT Extra']:
+                # Change all font attributes to Arial
+                fonts.set(f"{{{WORD_NAMESPACE['w']}}}ascii", "Arial")
+                fonts.set(f"{{{WORD_NAMESPACE['w']}}}hAnsi", "Arial")
+                fonts.set(f"{{{WORD_NAMESPACE['w']}}}cs", "Arial")
+                fixed += 1
+                
+                text_node = run.find("w:t", WORD_NAMESPACE)
+                if text_node is not None and text_node.text:
+                    logger.info(f"  ✓ Changed {ascii_font} → Arial for text: {repr(text_node.text[:20])}")
+        
+        # Write back XML
+        tree.write(document_xml, encoding="UTF-8", xml_declaration=True)
+        
+        # Rezip
+        zip_docx(temp_dir, docx_path)
+        
+        return fixed
     finally:
         import shutil
         shutil.rmtree(temp_dir)
@@ -187,6 +245,12 @@ def anonymize_docx(input_path: str, output_path: str, name: str = None, roll_no:
             count = _remove_value_byte_level(output_path, name)
         stats["removed_name"] = count
         stats["bytes_removed"] += count
+    
+    # Fix bullet formatting to ensure circular bullets in Word
+    logger.info(f"  📍 Fixing bullet formatting...")
+    bullet_fixed = _fix_bullet_formatting(output_path)
+    if bullet_fixed > 0:
+        logger.info(f"  ✓ Fixed {bullet_fixed} bullet paragraphs")
     
     logger.info(f"✅ Anonymization complete: {stats}")
     return stats

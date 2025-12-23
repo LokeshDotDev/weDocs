@@ -18,7 +18,8 @@ router.get('/files', async (req, res) => {
     const objectsStream = minioClient.listObjects(MINIO_BUCKET, '', true);
 
     objectsStream.on('data', (obj) => {
-      if (obj.name.toLowerCase().endsWith('.docx')) {
+      const fileName = obj.name.toLowerCase();
+      if (fileName.endsWith('.docx') || fileName.endsWith('.pdf')) {
         objectList.push({
           name: obj.name,
           key: obj.name,
@@ -40,7 +41,7 @@ router.get('/files', async (req, res) => {
   }
 });
 
-// Anonymize a DOCX file from MinIO
+// Anonymize a PDF/DOCX file from MinIO using Reductor Service V2
 router.post('/anonymize-file', async (req, res) => {
   const { fileKey } = req.body;
 
@@ -48,49 +49,34 @@ router.post('/anonymize-file', async (req, res) => {
     return res.status(400).send({ error: 'fileKey is required' });
   }
 
-  const tempDir = os.tmpdir();
-  const inputPath = path.join(tempDir, `reductor-input-${Date.now()}.docx`);
-  const outputPath = path.join(tempDir, `reductor-output-${Date.now()}.docx`);
-  const anonymizedFileKey = `anonymized/${Date.now()}-${fileKey}`;
-
   try {
-    // Download DOCX from MinIO
-    await minioClient.fGetObject(MINIO_BUCKET, fileKey, inputPath);
-
-    // Call reductor service V2 to anonymize
+    // Call reductor service V2 - it handles download, conversion, anonymization, and upload
     const resp = await axios.post(
-      `${REDUCTOR_SERVICE_V2_URL}/anonymize-docx`,
+      `${REDUCTOR_SERVICE_V2_URL}/anonymize`,
       {
-        input_file_path: inputPath,
-        output_file_path: outputPath,
+        bucket: MINIO_BUCKET,
+        object_key: fileKey,
       },
       { timeout: 600000 }
     );
 
-    if (resp.status !== 200) {
-      throw new Error(`Anonymization failed: ${resp.statusText}`);
+    if (resp.status !== 200 || resp.data.status !== 'success') {
+      throw new Error(`Anonymization failed: ${resp.statusText || 'Unknown error'}`);
     }
 
-    // Upload anonymized file back to MinIO
-    await minioClient.fPutObject(MINIO_BUCKET, anonymizedFileKey, outputPath, {
-      'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    });
-
-    // Clean up temp files
-    fs.unlinkSync(inputPath);
-    fs.unlinkSync(outputPath);
+    const result = resp.data;
 
     res.json({
       status: 'success',
       original_file: fileKey,
-      anonymized_file: anonymizedFileKey,
-      download_url: `/api/reductor/download?fileKey=${encodeURIComponent(anonymizedFileKey)}`,
+      anonymized_file: result.minio_output_key,
+      download_url: `/api/reductor/download?fileKey=${encodeURIComponent(result.minio_output_key)}`,
+      detected_before: result.detected_before,
+      detected_after: result.detected_after,
+      removed_bytes: result.removed_bytes,
     });
   } catch (err: any) {
-    // Clean up on error
-    if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-
+    console.error('Anonymization error:', err);
     res.status(500).send({ error: err.message || 'Anonymization failed' });
   }
 });
@@ -109,8 +95,15 @@ router.get('/download', async (req, res) => {
     // Download from MinIO to temp
     await minioClient.fGetObject(MINIO_BUCKET, fileKey, tempPath);
 
+    // Extract filename from fileKey
+    const filename = path.basename(fileKey);
+
+    // Set proper headers for DOCX download
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
     // Stream to client
-    res.download(tempPath, (err) => {
+    res.download(tempPath, filename, (err) => {
       if (err) console.error('Download error:', err);
       // Clean up after download completes
       if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
