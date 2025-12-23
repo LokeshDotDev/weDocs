@@ -27,7 +27,7 @@ interface HumanizationJob {
   completedAt?: Date;
 }
 
-const PYTHON_MANAGER_URL = process.env['PYTHON_MANAGER_URL'] || 'http://localhost:5000';
+const PYTHON_MANAGER_URL = process.env['PYTHON_MANAGER_URL'] || 'http://localhost:5002';
 const HUMANIZER_URL = process.env['HUMANIZER_URL'] || 'http://localhost:8000/humanize';
 
 const pipelineAsync = promisify(pipeline);

@@ -72,7 +72,12 @@ export default function AIDetectionPage() {
 	useEffect(() => {
 		if (!jobId) return;
 
+		let pollCount = 0;
 		const interval = setInterval(async () => {
+			pollCount++;
+			// Poll every 1s for first 30s (model loading), then every 3s
+			const nextInterval = pollCount < 30 ? 1000 : 3000;
+			
 			try {
 				const response = await fetch(`/api/ai-detection/job/${jobId}`);
 				const data = await response.json();
@@ -89,13 +94,38 @@ export default function AIDetectionPage() {
 						setLoading(false);
 						setJobId(null);
 						clearInterval(interval);
-						alert("Detection failed");
+						alert("Detection failed. Check console for errors.");
 					}
 				}
 			} catch (error) {
 				console.error("Error polling job:", error);
 			}
-		}, 2000);
+			
+			// Adjust interval dynamically
+			if (pollCount === 30) {
+				clearInterval(interval);
+				setInterval(async () => {
+					try {
+						const response = await fetch(`/api/ai-detection/job/${jobId}`);
+						const data = await response.json();
+						if (data.success) {
+							setProgress(data.job.progress);
+							if (data.job.status === "completed") {
+								setResults(data.job.results);
+								setLoading(false);
+								setJobId(null);
+							} else if (data.job.status === "failed") {
+								setLoading(false);
+								setJobId(null);
+								alert("Detection failed");
+							}
+						}
+					} catch (e) {
+						console.error(e);
+					}
+				}, 3000);
+			}
+		}, 1000);
 
 		return () => clearInterval(interval);
 	}, [jobId]);
@@ -187,14 +217,25 @@ export default function AIDetectionPage() {
 						{loading ? (
 							<>
 								<Loader className='mr-2 w-4 h-4 animate-spin' />
-								Detecting... {progress}%
+								{progress < 10 ? 'Loading AI models (30-60s first time)...' : `Detecting... ${progress}%`}
 							</>
 						) : (
 							"Start Detection"
 						)}
 					</Button>
 
-					{loading && <Progress value={progress} className='w-full' />}
+					{loading && (
+						<>
+							<Progress value={progress} className='w-full' />
+							<Alert>
+								<AlertCircle className="h-4 w-4" />
+								<AlertDescription>
+									<strong>Please wait:</strong> First-time detection loads AI models (30-60 seconds), 
+									then analyzes each paragraph. This may take 1-3 minutes total.
+								</AlertDescription>
+							</Alert>
+						</>
+					)}
 				</CardContent>
 			</Card>
 

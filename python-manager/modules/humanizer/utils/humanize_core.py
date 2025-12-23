@@ -166,14 +166,16 @@ def replace_synonyms(text, p_syn=0.2):
     doc = nlp(text)
     replaced = []
     for token in doc:
+        # Preserve original whitespace from spacy token
+        ws = token.whitespace_  # Correct spacy attribute for trailing whitespace
         if token.pos_ in ("NOUN", "VERB", "ADJ", "ADV") and random.random() < p_syn:
             syn = get_synonym(token.text)
-            if syn:
-                replaced.append(syn)
-            else:
-                replaced.append(token.text_with_ws)
+            text_out = syn if syn else token.text
         else:
-            replaced.append(token.text_with_ws)
+            text_out = token.text
+        replaced.append(text_out + ws)  # Use original whitespace, not forced spacer
+
+    # Join directly; whitespace already preserved from original
     return "".join(replaced)
 
 def add_academic_transitions(text, p_trans=0.2):

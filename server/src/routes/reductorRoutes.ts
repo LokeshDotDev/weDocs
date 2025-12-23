@@ -11,7 +11,7 @@ const MANAGER_URL = process.env.PYTHON_MANAGER_URL || 'http://localhost:5002';
 const REDUCTOR_SERVICE_V2_URL = process.env.REDUCTOR_SERVICE_V2_URL || 'http://localhost:5018';
 const MINIO_BUCKET = process.env.MINIO_BUCKET || 'wedocs';
 
-// List all DOCX files from MinIO
+// List all PDF files (ONLY PDF - Reductor doesn't support DOCX/other formats)
 router.get('/files', async (req, res) => {
   try {
     const objectList: any[] = [];
@@ -19,7 +19,8 @@ router.get('/files', async (req, res) => {
 
     objectsStream.on('data', (obj) => {
       const fileName = obj.name.toLowerCase();
-      if (fileName.endsWith('.docx') || fileName.endsWith('.pdf')) {
+      // ONLY accept PDF files
+      if (fileName.endsWith('.pdf')) {
         objectList.push({
           name: obj.name,
           key: obj.name,
@@ -34,19 +35,29 @@ router.get('/files', async (req, res) => {
     });
 
     objectsStream.on('end', () => {
-      res.json({ files: objectList });
+      res.json({ 
+        files: objectList,
+        message: 'Reductor accepts only PDF files. Use Humanizer for DOCX.'
+      });
     });
   } catch (err: any) {
     res.status(500).send({ error: err.message || 'Failed to list files' });
   }
 });
 
-// Anonymize a PDF/DOCX file from MinIO using Reductor Service V2
+// Anonymize a PDF file from MinIO using Reductor Service V2
 router.post('/anonymize-file', async (req, res) => {
   const { fileKey } = req.body;
 
   if (!fileKey) {
     return res.status(400).send({ error: 'fileKey is required' });
+  }
+
+  // Validate file is PDF
+  if (!fileKey.toLowerCase().endsWith('.pdf')) {
+    return res.status(400).send({ 
+      error: 'Reductor only accepts PDF files. For DOCX files, use the Humanizer service.' 
+    });
   }
 
   try {

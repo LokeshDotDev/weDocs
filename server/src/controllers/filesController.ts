@@ -384,3 +384,110 @@ export const streamDocxByKey = async (
     next(error);
   }
 };
+
+/**
+ * Download file from MinIO
+ * GET /api/files/download?fileKey=<minioFileKey>
+ */
+export const downloadFile = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { fileKey } = req.query;
+
+    if (!fileKey || typeof fileKey !== 'string') {
+      res.status(400).json({ error: 'fileKey query parameter is required' });
+      return;
+    }
+
+    logger.info({ fileKey }, '[downloadFile] Downloading file');
+
+    // Extract filename from fileKey
+    const filename = fileKey.split('/').pop() || 'document.docx';
+
+    // Set response headers for DOCX download
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    try {
+      const stream = await minioClient.getObject(config.MINIO_BUCKET, fileKey);
+
+      stream.on('error', (err) => {
+        logger.error({ err, fileKey }, '[downloadFile] Stream error');
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Failed to download file' });
+        }
+      });
+
+      stream.pipe(res);
+
+      stream.on('end', () => {
+        logger.info({ fileKey }, '[downloadFile] Download completed');
+      });
+    } catch (streamErr) {
+      logger.error({ streamErr, fileKey }, '[downloadFile] Error getting object');
+      throw streamErr;
+    }
+  } catch (error) {
+    logger.error({ error }, '[downloadFile] Failed');
+    next(error);
+  }
+};
+
+/**
+ * Preview file - extract text content
+ * GET /api/files/preview?fileKey=<minioFileKey>
+ */
+export const previewFile = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { fileKey } = req.query;
+
+    if (!fileKey || typeof fileKey !== 'string') {
+      res.status(400).json({ error: 'fileKey query parameter is required' });
+      return;
+    }
+
+    logger.info({ fileKey }, '[previewFile] Generating preview');
+
+    if (fileKey.endsWith('.docx')) {
+      try {
+        const chunks: Buffer[] = [];
+        const stream = await minioClient.getObject(config.MINIO_BUCKET, fileKey);
+
+        for await (const chunk of stream) {
+          chunks.push(chunk as Buffer);
+        }
+
+        const docxBuffer = Buffer.concat(chunks);
+
+        try {
+          const mammoth = await import('mammoth');
+          const result = await mammoth.extractRawText({ buffer: docxBuffer });
+          const text = result.value;
+          
+          res.setHeader('Content-Type', 'text/plain');
+          res.send(text.substring(0, 5000));
+        } catch (mammothErr) {
+          logger.warn({ mammothErr }, '[previewFile] Mammoth extraction failed');
+          res.setHeader('Content-Type', 'text/plain');
+          res.send('[DOCX file - text extraction not available]');
+        }
+      } catch (docxErr) {
+        logger.error({ docxErr, fileKey }, '[previewFile] Error extracting DOCX');
+        throw docxErr;
+      }
+    } else {
+      res.setHeader('Content-Type', 'text/plain');
+      res.send(`[Preview for ${fileKey.split('/').pop()} not available]`);
+    }
+  } catch (error) {
+    logger.error({ error }, '[previewFile] Failed');
+    next(error);
+  }
+};

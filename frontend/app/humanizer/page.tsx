@@ -108,6 +108,14 @@ export default function HumanizerPage() {
 		);
 	};
 
+	const handleSelectAll = () => {
+		setFiles((prevFiles) => prevFiles.map((f) => ({ ...f, selected: true })));
+	};
+
+	const handleClearAll = () => {
+		setFiles((prevFiles) => prevFiles.map((f) => ({ ...f, selected: false })));
+	};
+
 	const handleHumanize = async () => {
 		const selectedFileKeys = files
 			.filter((f) => f.selected)
@@ -170,8 +178,30 @@ export default function HumanizerPage() {
 			<Card>
 				<CardHeader>
 					<CardTitle>Select Documents to Humanize</CardTitle>
+					<p className='text-sm text-gray-600 mt-2'>
+						Selected: <span className='font-semibold'>{files.filter((f) => f.selected).length}</span> of{" "}
+						<span className='font-semibold'>{files.length}</span> files
+					</p>
 				</CardHeader>
 				<CardContent className='space-y-4'>
+					{files.length > 0 && (
+						<div className='flex gap-2'>
+							<Button
+								variant='outline'
+								size='sm'
+								onClick={handleSelectAll}
+								disabled={files.every((f) => f.selected)}>
+								Select All
+							</Button>
+							<Button
+								variant='outline'
+								size='sm'
+								onClick={handleClearAll}
+								disabled={files.every((f) => !f.selected)}>
+								Clear All
+							</Button>
+						</div>
+					)}
 					<div className='max-h-64 overflow-y-auto space-y-2 border rounded p-4'>
 						{files.length === 0 ? (
 							<p className='text-gray-500'>No DOCX files found in MinIO</p>
@@ -264,14 +294,13 @@ export default function HumanizerPage() {
 									/>
 								</div>
 
-								{/* Download Button */}
-								<Button
-									onClick={() => handleDownload(result.outputFileKey)}
-									variant='default'
-									className='w-full'>
-									<Download className='mr-2 w-4 h-4' />
-									Download Humanized Document
-								</Button>
+								{/* Stored in MinIO notice */}
+								<div className='mt-2 text-sm text-gray-700'>
+									Saved to MinIO as:
+									<span className='ml-1 font-mono'>
+										{result.outputFileKey}
+									</span>
+								</div>
 							</CardContent>
 						</Card>
 					))}

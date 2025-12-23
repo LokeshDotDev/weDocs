@@ -53,11 +53,11 @@ def run_detector(text: str) -> Optional[dict]:
 
 
 def run_humanizer(text: str) -> str:
-    """Call humanizer with balanced settings for noticeable changes."""
+    """Call humanizer with conservative settings to preserve layout."""
     payload = {
         "text": text,
-        "p_syn": 0.3,              # moderate synonym replacement (30% of words)
-        "p_trans": 0.5,            # moderate transitions (50% of sentences)
+        "p_syn": 0.0,              # disable synonyms to avoid spacing issues
+        "p_trans": 0.2,            # light transitions
         "preserve_linebreaks": True,
     }
     data = _post_json(HUMANIZER_URL, payload, timeout=120)

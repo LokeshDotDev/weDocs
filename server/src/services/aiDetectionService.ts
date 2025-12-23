@@ -113,6 +113,46 @@ class AIDetectionService {
   }
 
   /**
+   * Detect using paragraph-level batching with Binoculars
+   */
+  async detectParagraphs(paragraphs: string[]): Promise<{ scores: number[]; overallScore: number }> {
+    try {
+      console.log(`[detectParagraphs] Processing ${paragraphs.length} paragraphs via batch...`);
+      const response = await axios.post(
+        `${PYTHON_MANAGER_URL}/ai-detection/batch-detect`,
+        { texts: paragraphs },
+        { timeout: 300000 } // 5 minutes for Binoculars batch
+      );
+
+      const results = Array.isArray(response.data?.results) ? response.data.results : [];
+      const scores = results.map((r: any) => (typeof r.score === 'number' ? r.score : 0.5));
+      
+      // Weighted average by paragraph length
+      let weightedSum = 0;
+      let totalLen = 0;
+      for (let i = 0; i < paragraphs.length; i++) {
+        const len = paragraphs[i].length;
+        const score = scores[i] || 0.5;
+        weightedSum += score * len;
+        totalLen += len;
+      }
+      const overallScore = totalLen > 0 ? weightedSum / totalLen : 0.5;
+
+      console.log(`[detectParagraphs] ✅ Completed: overall=${(overallScore * 100).toFixed(1)}%`);
+      return { scores, overallScore };
+    } catch (error) {
+      console.warn(
+        '[detectParagraphs] Batch failed, returning neutral scores:',
+        error instanceof Error ? error.message : ''
+      );
+      return {
+        scores: paragraphs.map(() => 0.5),
+        overallScore: 0.5,
+      };
+    }
+  }
+
+  /**
    * Detect AI for large text by chunking into 100-char segments and batching.
    */
   async detectByChunks(text: string): Promise<TextSegment[]> {
@@ -193,23 +233,40 @@ class AIDetectionService {
     const startTime = Date.now();
 
     try {
-      // Extract text
+      console.log(`[detectAIInFile] 🔍 Starting detection for ${fileKey}`);
+      
+      // Extract text and paragraphs
       const { text, paragraphs } = await this.extractTextFromDocx(fileKey);
 
-      // Prefer chunk-based detection for robustness on long texts
-      const segments = await this.detectByChunks(text);
+      console.log(`[detectAIInFile] 📄 Extracted ${paragraphs.length} paragraphs (${text.length} chars) from ${fileKey}`);
 
-      // Calculate overall percentages (length-weighted average)
-      let weightedSum = 0;
-      let totalLen = 0;
-      for (const s of segments) {
-        const len = s.endIndex - s.startIndex;
-        weightedSum += s.aiScore * len;
-        totalLen += len;
+      // Detect each paragraph using Binoculars batch-detect
+      console.log(`[detectAIInFile] 🤖 Sending to Binoculars (this takes 30-180 seconds on first run)...`);
+      const { scores, overallScore } = await this.detectParagraphs(paragraphs);
+
+      // Build segments for each paragraph
+      const segments: TextSegment[] = [];
+      let cursor = 0;
+      for (let i = 0; i < paragraphs.length; i++) {
+        const para = paragraphs[i];
+        const score = Math.min(Math.max(scores[i] || 0.5, 0), 1);
+        const startIndex = cursor;
+        const endIndex = cursor + para.length;
+        cursor = endIndex + 2; // account for paragraph breaks
+
+        segments.push({
+          text: para,
+          aiScore: score,
+          aiPercentage: Math.round(score * 100),
+          humanPercentage: 100 - Math.round(score * 100),
+          isAI: score > BINOCULARS_THRESHOLD,
+          startIndex,
+          endIndex,
+        });
       }
 
-      // Calculate overall percentages
-      const overallAIScore = totalLen > 0 ? weightedSum / totalLen : 0;
+      // Overall weighted score
+      const overallAIScore = Math.min(Math.max(overallScore, 0), 1);
       const overallAIPercentage = Math.round(overallAIScore * 100);
       const overallHumanPercentage = 100 - overallAIPercentage;
 

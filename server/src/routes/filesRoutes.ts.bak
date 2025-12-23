@@ -1,29 +1,5 @@
+import { Router } from 'express';
 import {
-  listFiles,
-  getFileUrl,
-  listUsers,
-  listUploads,
-  listFormattedFiles,
-  getFileContent,
-  saveFileContent,
-  getDocxFileUrl,
-  saveDocxFile,
-  streamDocxByKey,
-  downloadFile,
-  previewFile, Router } from 'express';
-import {
-  listFiles,
-  getFileUrl,
-  listUsers,
-  listUploads,
-  listFormattedFiles,
-  getFileContent,
-  saveFileContent,
-  getDocxFileUrl,
-  saveDocxFile,
-  streamDocxByKey,
-  downloadFile,
-  previewFile,
   listFiles,
   getFileUrl,
   listUsers,
@@ -181,11 +157,6 @@ router.get('/docx-list', async (req: Request, res: Response, next: NextFunction)
 
 // Preview endpoint: Extract text from DOCX for comparison
 router.get('/preview', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-
-// Download and preview endpoints
-router.get('/download', downloadFile);
-router.get('/preview', previewFile);
-
   try {
     const { fileKey } = req.query;
     if (!fileKey || typeof fileKey !== 'string') {
