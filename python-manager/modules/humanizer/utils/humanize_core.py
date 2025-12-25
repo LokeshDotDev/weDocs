@@ -132,6 +132,12 @@ ACADEMIC_TRANSITIONS = [
     "On the other hand,", "In contrast,", "Similarly,", "Likewise,",
     "Consequently,", "Therefore,", "Thus,", "Hence,",
     "For instance,", "For example,", "In particular,", "Notably,",
+    "It is worth noting that", "Significantly,", "Interestingly,",
+    "As a matter of fact,", "Indeed,", "In fact,", "Evidently,",
+    "To illustrate,", "To clarify,", "Specifically,", "In essence,",
+    "Broadly speaking,", "Generally speaking,", "By and large,",
+    "To put it differently,", "In other words,", "That is to say,",
+    "With this in mind,", "Given this,", "Accordingly,", "As such,",
 ]
 
 def expand_contractions(text):
@@ -152,12 +158,30 @@ def expand_contractions(text):
     return " ".join(expanded)
 
 def get_synonym(word):
+    """Get a synonym with better selection strategy for more natural text."""
     synsets = wordnet.synsets(word)
-    if synsets:
-        lemmas = synsets[0].lemmas()
-        syns = [lemma.name().replace("_", " ") for lemma in lemmas if lemma.name().lower() != word.lower()]
-        if syns:
-            return random.choice(syns)
+    all_syns = []
+    
+    # Try multiple synsets for more variety (up to 3)
+    for synset in synsets[:3]:
+        lemmas = synset.lemmas()
+        syns = [
+            lemma.name().replace("_", " ") 
+            for lemma in lemmas 
+            if lemma.name().lower() != word.lower() and "_" not in lemma.name()
+        ]
+        all_syns.extend(syns)
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_syns = []
+    for syn in all_syns:
+        if syn.lower() not in seen:
+            seen.add(syn.lower())
+            unique_syns.append(syn)
+    
+    if unique_syns:
+        return random.choice(unique_syns)
     return None
 
 def replace_synonyms(text, p_syn=0.2):
@@ -168,7 +192,15 @@ def replace_synonyms(text, p_syn=0.2):
     for token in doc:
         # Preserve original whitespace from spacy token
         ws = token.whitespace_  # Correct spacy attribute for trailing whitespace
-        if token.pos_ in ("NOUN", "VERB", "ADJ", "ADV") and random.random() < p_syn:
+        
+        # More aggressive replacement for adjectives and adverbs
+        should_replace = False
+        if token.pos_ in ("ADJ", "ADV"):
+            should_replace = random.random() < (p_syn * 1.3)  # 30% more likely
+        elif token.pos_ in ("NOUN", "VERB"):
+            should_replace = random.random() < p_syn
+        
+        if should_replace and len(token.text) > 3:  # Skip very short words
             syn = get_synonym(token.text)
             text_out = syn if syn else token.text
         else:

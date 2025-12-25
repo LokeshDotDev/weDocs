@@ -27,6 +27,7 @@ interface FileSelection {
 export default function HumanizerPage() {
 	const [files, setFiles] = useState<FileSelection[]>([]);
 	const [results, setResults] = useState<HumanizationResult[]>([]);
+	const [downloadingAll, setDownloadingAll] = useState(false);
 	const [jobId, setJobId] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [progress, setProgress] = useState(0);
@@ -149,19 +150,38 @@ export default function HumanizerPage() {
 
 	const handleDownload = async (outputFileKey: string) => {
 		try {
-			const response = await fetch(
-				`/api/minio/download?fileKey=${outputFileKey}`
-			);
-			const blob = await response.blob();
-			const url = window.URL.createObjectURL(blob);
-			const a = document.createElement("a");
-			a.href = url;
-			a.download = outputFileKey.split("/").pop() || "humanized.docx";
-			document.body.appendChild(a);
-			a.click();
-			window.URL.revokeObjectURL(url);
+			const url = `/api/files/download?fileKey=${encodeURIComponent(outputFileKey)}`;
+			// Open in a new tab to ensure browser allows sequential downloads
+			window.open(url, "_blank");
 		} catch (error) {
 			console.error("Error downloading file:", error);
+		}
+	};
+
+	const handleDownloadAll = async () => {
+		if (!results || results.length === 0) return;
+		setDownloadingAll(true);
+		try {
+			// Use hidden iframes to initiate separate downloads without popups.
+			// This approach works better across browsers than multiple window.open calls.
+			results.forEach((r, idx) => {
+				const outKey = r.outputFileKey;
+				const url = `/api/files/download?fileKey=${encodeURIComponent(outKey)}`;
+				setTimeout(() => {
+					const iframe = document.createElement("iframe");
+					iframe.style.display = "none";
+					iframe.src = url;
+					document.body.appendChild(iframe);
+					// Clean up iframe after some time
+					setTimeout(() => {
+						try {
+							iframe.parentNode?.removeChild(iframe);
+						} catch {}
+					}, 5000);
+				}, idx * 200);
+			});
+		} finally {
+			setDownloadingAll(false);
 		}
 	};
 
@@ -243,7 +263,18 @@ export default function HumanizerPage() {
 			{/* Results */}
 			{results.length > 0 && (
 				<div className='space-y-4'>
-					<h2 className='text-2xl font-bold'>Humanization Results</h2>
+					<div className='flex items-center justify-between'>
+						<h2 className='text-2xl font-bold'>Humanization Results</h2>
+						<Button
+							variant='default'
+							size='sm'
+							onClick={handleDownloadAll}
+							disabled={downloadingAll || results.length === 0}
+						>
+							<Download className='w-4 h-4 mr-2' />
+							{downloadingAll ? "Downloading..." : "Download All Humanized"}
+						</Button>
+					</div>
 
 					{results.map((result) => (
 						<Card key={result.fileKey}>

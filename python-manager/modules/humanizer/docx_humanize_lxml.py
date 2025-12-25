@@ -1,15 +1,12 @@
 """
-Smart DOCX humanizer for Q&A documents:
-- Skip everything before "Assignment Set" heading
-- Skip "Assignment Set" heading itself  
-- Skip question paragraphs (Q1, Q2, etc.)
-- ONLY humanize answer content (A1, A2, etc.)
-- Never touch table formatting
+Ultra-conservative DOCX humanizer:
+- Processes each text node (w:t) independently
+- NEVER modifies document structure, runs, or formatting
+- Skips tables completely using XPath filter
+- Only changes text content within existing nodes
+- Preserves alignment, spacing, styles, and layout 100%
 
-Workflow:
-- Reads DOCX as zip
-- For answer paragraphs, concatenates text, sends to humanizer, writes back
-- Preserves all formatting, styling, and layout
+Key principle: Humanize CONTENT only, never STRUCTURE
 """
 
 import argparse
@@ -17,7 +14,7 @@ import io
 import os
 import re
 import zipfile
-from typing import Iterable, List, Optional
+import difflib
 
 import requests
 from lxml import etree
@@ -25,9 +22,18 @@ from lxml import etree
 
 NSMAP = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
-DETECT_URL = os.environ.get("DETECT_URL", "http://localhost:5003/detect")
-DETECT_FAST = os.environ.get("DETECT_FAST", "1") in ("1", "true", "True")
 HUMANIZER_URL = os.environ.get("HUMANIZER_URL", "http://localhost:8000/humanize")
+
+# Tuning knobs (env-driven) for aggressiveness and safety guards
+# Optimized for AI detection scores < 10%
+AGGRESSIVE = os.environ.get("HUMANIZER_AGGRESSIVE", "1") in ("1", "true", "True")
+HIGH_P_SYN = float(os.environ.get("HUMANIZER_P_SYN_HIGH", "0.85"))  # Increased from 0.70
+HIGH_P_TRANS = float(os.environ.get("HUMANIZER_P_TRANS_HIGH", "0.55"))  # Increased from 0.40
+MID_P_SYN = float(os.environ.get("HUMANIZER_P_SYN_LOW", "0.65"))  # Increased from 0.50
+MID_P_TRANS = float(os.environ.get("HUMANIZER_P_TRANS_LOW", "0.45"))  # Increased from 0.32
+MAX_LEN_DELTA = float(os.environ.get("HUMANIZER_MAX_LEN_DELTA", "0.20"))  # Increased from 0.12 (20% length tolerance)
+SIMILARITY_MAX = float(os.environ.get("HUMANIZER_SIMILARITY_MAX", "0.75"))  # Reduced from 0.90 (require more change)
+MAX_ATTEMPTS = int(os.environ.get("HUMANIZER_ATTEMPTS", "5"))  # Increased from 3
 
 
 def _post_json(url: str, payload: dict, timeout: int = 60) -> dict:
@@ -36,171 +42,186 @@ def _post_json(url: str, payload: dict, timeout: int = 60) -> dict:
     return resp.json()
 
 
-def run_detector(text: str) -> Optional[dict]:
-    if not DETECT_URL:
-        return None
-    url = DETECT_URL
-    payload = {"text": text}
-    if DETECT_FAST and url.endswith("/detect"):
-        url = url + "?mode=fast"
-    try:
-        return _post_json(url, payload)
-    except requests.RequestException:
-        if url.endswith("/detect") or url.endswith("/detect?mode=fast"):
-            alt = url.split("?")[0].rsplit("/", 1)[0] + "/detect-fast"
-            return _post_json(alt, payload)
-        raise
+def _apply_casing_like(original: str, new: str) -> str:
+    """Match casing style of original (ALL CAPS, Title Case, lower)."""
+    o = original.strip()
+    if not o:
+        return new
+    if o.isupper():
+        return new.upper()
+    # Title-like if most words are capitalized
+    words = o.split()
+    if words and sum(w[:1].isupper() for w in words) >= max(1, int(0.6 * len(words))):
+        return " ".join(w[:1].upper() + w[1:] if w else w for w in new.split())
+    if o.islower():
+        return new.lower()
+    return new
 
 
-def run_humanizer(text: str) -> str:
-    """Call humanizer with balanced settings for noticeable changes."""
-    payload = {
-        "text": text,
-        "p_syn": 0.3,              # moderate synonym replacement (30% of words)
-        "p_trans": 0.5,            # moderate transitions (50% of sentences)
-        "preserve_linebreaks": True,
-    }
-    data = _post_json(HUMANIZER_URL, payload, timeout=120)
-    for key in ("human_text", "humanized_text", "text", "output", "result"):
-        if key in data and isinstance(data[key], str):
-            return data[key]
-    if isinstance(data, str):
-        return data
-    raise ValueError("Humanizer response missing expected text field")
+def _numbers_sequence(text: str) -> list:
+    return re.findall(r"\d+[\d,\.]*", text)
 
 
-def _gather_text_nodes(paragraph: etree._Element) -> List[etree._Element]:
-    return paragraph.xpath(".//w:t", namespaces=NSMAP)
+def _length_ratio_ok(a: str, b: str, max_delta: float = MAX_LEN_DELTA) -> bool:
+    la, lb = len(a), len(b)
+    if la == 0:
+        return True
+    ratio = abs(lb - la) / la
+    return ratio <= max_delta
 
 
-def _joined_text(nodes: Iterable[etree._Element]) -> str:
-    return "".join((node.text or "") for node in nodes)
+def _changed_enough(a: str, b: str) -> bool:
+    """True if paraphrase differs sufficiently from original (<= SIMILARITY_MAX)."""
+    sm = difflib.SequenceMatcher(a=a, b=b)
+    return sm.ratio() <= SIMILARITY_MAX
 
 
-def _redistribute_text(nodes: List[etree._Element], new_text: str) -> None:
-    """Redistribute text across runs preserving word boundaries."""
-    if not nodes:
-        return
-    
-    words = new_text.split(' ')
-    word_idx = 0
-    
-    for idx, node in enumerate(nodes):
-        if word_idx >= len(words):
-            node.text = ""
-            continue
-        
-        orig_len = len(node.text or "")
-        total_orig = sum(len(n.text or "") for n in nodes)
-        
-        if total_orig == 0:
-            remaining_words = len(words) - word_idx
-            remaining_nodes = len(nodes) - idx
-            target_words = max(1, remaining_words // remaining_nodes) if remaining_nodes > 0 else remaining_words
-        else:
-            words_ratio = orig_len / total_orig if total_orig > 0 else 1.0
-            remaining_words = len(words) - word_idx
-            target_words = max(1, int(remaining_words * words_ratio))
-        
-        if idx == len(nodes) - 1:
-            target_words = len(words) - word_idx
-        
-        chunk_words = words[word_idx:word_idx + target_words]
-        chunk = ' '.join(chunk_words) if chunk_words else ""
-        
-        if word_idx + target_words < len(words):
-            chunk += ' '
-        
-        node.text = chunk
-        word_idx += target_words
+def _preserve_whitespace_shell(original: str, core: str) -> str:
+    m = re.match(r"(\s*)(.*?)(\s*)$", original, flags=re.DOTALL)
+    if not m:
+        return core
+    pre, _, post = m.groups()
+    return f"{pre}{core}{post}"
 
 
-def _norm(s: str) -> str:
-    """Normalize string for comparison."""
-    return " ".join((s or "").split()).lower()
+def _ancestor_paragraph(text_node: etree._Element) -> etree._Element:
+    p_list = text_node.xpath("ancestor::w:p[1]", namespaces=NSMAP)
+    return p_list[0] if p_list else None
 
 
-def _is_question(text: str) -> bool:
-    """Detect if paragraph is a question (Q1, Q2, etc.)."""
-    norm = _norm(text)
-    # Match: q1. q2. Q1: Q2: question 1, question 2, etc.
+def _paragraph_text(p: etree._Element) -> str:
+    return "".join((t.text or "") for t in p.xpath(".//w:t", namespaces=NSMAP))
+
+
+def _is_question_para_text(text: str) -> bool:
+    norm = " ".join((text or "").split()).lower()
     return bool(re.match(r'^q\s*\d+[\.:]*', norm)) or bool(re.match(r'^question\s+\d+', norm))
 
 
-def _is_answer(text: str) -> bool:
-    """Detect if paragraph is an answer (A1, A2, etc.)."""
-    norm = _norm(text)
-    # Match: a1. a2. A1: A2: answer 1, answer 2, etc.
-    return bool(re.match(r'^a\s*\d+[\.:]*', norm)) or bool(re.match(r'^answer\s+\d+', norm))
+def _is_heading_paragraph(p: etree._Element) -> bool:
+    styles = p.xpath("./w:pPr/w:pStyle", namespaces=NSMAP)
+    if not styles:
+        return False
+    val = styles[0].get(f"{{{NSMAP['w']}}}val", "")
+    return bool(re.search(r"heading", val, flags=re.IGNORECASE))
 
 
-def _is_assignment_heading(text: str) -> bool:
-    """Detect if paragraph is "Assignment Set" heading."""
-    norm = _norm(text)
-    return ("assignment" in norm) and ("set" in norm)
+def _is_list_paragraph(p: etree._Element) -> bool:
+    return bool(p.xpath("./w:pPr/w:numPr", namespaces=NSMAP))
+
+
+def _should_humanize_text_node(text_node: etree._Element) -> bool:
+    p = _ancestor_paragraph(text_node)
+    if p is None:
+        return False
+    # Skip headings
+    if _is_heading_paragraph(p):
+        return False
+    text = _paragraph_text(p)
+    # Skip obvious question lines
+    if _is_question_para_text(text):
+        return False
+    # Always allow list items; else require decent length
+    if _is_list_paragraph(p):
+        return True
+    return len((text or "").strip()) >= 15  # Reduced from 30 to 15 for more coverage
+
+
+def _humanize_text_node(text_node: etree._Element) -> None:
+    """
+    Humanize a single text node without touching structure.
+    This preserves ALL formatting by only changing text content.
+    """
+    original_text = text_node.text or ""
+    
+    # Skip very short text (likely labels, numbers, etc.)
+    if len(original_text.strip()) < 5:  # Reduced from 8 to 5
+        return
+    
+    # Skip if it's just whitespace or special characters
+    if not re.search(r'\w{2,}', original_text):  # Reduced from 3 to 2
+        return
+    
+    try:
+        # Strip outer whitespace, keep a shell to reapply later
+        stripped = original_text.strip()
+        if not stripped:
+            return
+
+        def call_humanizer(text: str, p_syn: float, p_trans: float) -> str:
+            payload = {
+                "text": text,
+                "p_syn": p_syn,
+                "p_trans": p_trans,
+                "preserve_linebreaks": True,
+            }
+            data = _post_json(HUMANIZER_URL, payload, timeout=90)
+            for key in ("human_text", "humanized_text", "text", "output", "result"):
+                if key in data and isinstance(data[key], str):
+                    return data[key]
+            return text
+
+        # Try aggressive first if enabled, then moderate fallback
+        attempts = []
+        if AGGRESSIVE:
+            attempts.append((HIGH_P_SYN, HIGH_P_TRANS))
+        attempts.append((MID_P_SYN, MID_P_TRANS))
+
+        best = None
+        # Try multiple times to obtain sufficiently different paraphrase
+        for ps, pt in attempts:
+            for _ in range(max(1, MAX_ATTEMPTS)):
+                candidate = call_humanizer(stripped, ps, pt)
+                if not candidate or not candidate.strip():
+                    continue
+                # Basic guards: length, similarity, digits preservation
+                if not _length_ratio_ok(stripped, candidate, MAX_LEN_DELTA):
+                    continue
+                if AGGRESSIVE and not _changed_enough(stripped, candidate):
+                    # If too similar, retry with same params (to get different paraphrase)
+                    continue
+                # Ensure numeric tokens sequence count doesn't change
+                onums, nnums = _numbers_sequence(stripped), _numbers_sequence(candidate)
+                if len(onums) != len(nnums):
+                    # Force original numeric tokens into candidate where possible
+                    if len(nnums) == 0 and len(onums) > 0:
+                        # Too risky, skip
+                        continue
+                    # Replace in order
+                    i = 0
+                    def repl(m):
+                        nonlocal i
+                        val = onums[i] if i < len(onums) else m.group(0)
+                        i += 1
+                        return val
+                    candidate = re.sub(r"\d+[\d,\.]*", repl, candidate)
+                best = candidate
+                break
+            if best:
+                break
+
+        if best and best.strip():
+            best = _apply_casing_like(stripped, best)
+            best = _preserve_whitespace_shell(original_text, best)
+            text_node.text = best
+
+    except Exception as e:
+        # If humanization fails, keep original text
+        print(f"Warning: Failed to humanize text node: {e}")
+        pass
 
 
 def _process_tree(tree: etree._ElementTree, skip_detect: bool = False) -> None:
     """
-    Process document:
-    1. Skip everything before "Assignment Set"
-    2. Skip "Assignment Set" heading
-    3. Skip all question paragraphs
-    4. ONLY process answer paragraphs
-    5. Leave tables untouched
+    Process each text node independently to preserve exact formatting.
+    Skip tables completely. Only humanize content, never structure.
     """
-    processing_started = False
+    # Get all text nodes that are NOT inside tables
+    text_nodes = tree.xpath("//w:t[not(ancestor::w:tbl)]", namespaces=NSMAP)
 
-    for paragraph in tree.xpath("//w:p", namespaces=NSMAP):
-        text_nodes = _gather_text_nodes(paragraph)
-        if not text_nodes:
-            continue
-        
-        original = _joined_text(text_nodes)
-        if not original.strip():
-            continue
-
-        norm = _norm(original)
-        
-        # Stage 1: Wait for Assignment Set heading
-        if not processing_started:
-            if _is_assignment_heading(norm):
-                processing_started = True
-            # Skip everything before Assignment Set
-            continue
-        
-        # Stage 2: After Assignment Set
-        
-        # Skip the Assignment Set heading itself
-        if _is_assignment_heading(norm):
-            continue
-        
-        # Skip question paragraphs
-        if _is_question(norm):
-            continue
-        
-        # ONLY process answer paragraphs
-        if _is_answer(norm):
-            # Humanize this answer paragraph
-            if not skip_detect:
-                run_detector(original)
-            humanized = run_humanizer(original)
-            _redistribute_text(text_nodes, humanized)
-            continue
-        
-        # Skip short paragraphs (likely spacing or headings)
-        if len(original.strip()) < 15:
-            continue
-        
-        # For any other content after Assignment Set, also process
-        # (in case there's additional content that needs humanizing)
-        # But be conservative - maybe skip this for safety
-        # For now, let's be strict and only process answers
-        # Uncomment below to humanize non-Q&A content too:
-        # if not skip_detect:
-        #     run_detector(original)
-        # humanized = run_humanizer(original)
-        # _redistribute_text(text_nodes, humanized)
+    for text_node in text_nodes:
+        if _should_humanize_text_node(text_node):
+            _humanize_text_node(text_node)
 
 
 def _should_process(name: str) -> bool:
@@ -233,7 +254,7 @@ def process_docx(input_path: str, output_path: str, skip_detect: bool = False) -
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Humanize Q&A DOCX files - only modifies answers, preserves questions & tables"
+        description="Humanize DOCX content - preserves ALL formatting, tables, and structure"
     )
     parser.add_argument("--input", required=True, help="Path to input DOCX")
     parser.add_argument("--output", required=True, help="Path to write modified DOCX")
