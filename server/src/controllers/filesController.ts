@@ -395,21 +395,51 @@ export const downloadFile = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { fileKey } = req.query;
+    let { fileKey } = req.query;
 
     if (!fileKey || typeof fileKey !== 'string') {
       res.status(400).json({ error: 'fileKey query parameter is required' });
       return;
     }
 
+    // Decode the fileKey (it comes URL-encoded from the frontend)
+    try {
+      fileKey = decodeURIComponent(fileKey);
+    } catch (e) {
+      logger.warn({ fileKey }, '[downloadFile] Failed to decode fileKey, using as-is');
+    }
+
     logger.info({ fileKey }, '[downloadFile] Downloading file');
 
-    // Extract filename from fileKey
-    const filename = fileKey.split('/').pop() || 'document.docx';
+    // Check if file exists in MinIO first
+    try {
+      await minioClient.statObject(config.MINIO_BUCKET, fileKey);
+      logger.info({ fileKey }, '[downloadFile] File exists in MinIO');
+    } catch (statErr: any) {
+      logger.error({ statErr, fileKey }, '[downloadFile] File not found in MinIO');
+      if (!res.headersSent) {
+        res.status(404).json({ 
+          error: 'File not found in MinIO',
+          fileKey: fileKey,
+          details: statErr.message || statErr.code 
+        });
+      }
+      return;
+    }
 
-    // Set response headers for DOCX download
+    // Extract filename from fileKey (handle special characters)
+    const filename = fileKey.split('/').pop() || 'document.docx';
+    
+    // Sanitize filename for Content-Disposition header (remove special chars that break headers)
+    const safeFilename = filename
+      .replace(/[^\x20-\x7E]/g, '-') // Replace non-ASCII with hyphen
+      .replace(/["]/g, "'"); // Replace quotes with apostrophe
+
+    logger.info({ filename, fileKey }, '[downloadFile] Streaming file');
+
+    // Set proper headers for DOCX download with both safe and original filename
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
 
     try {
       const stream = await minioClient.getObject(config.MINIO_BUCKET, fileKey);
@@ -417,22 +447,31 @@ export const downloadFile = async (
       stream.on('error', (err) => {
         logger.error({ err, fileKey }, '[downloadFile] Stream error');
         if (!res.headersSent) {
-          res.status(500).json({ error: 'Failed to download file' });
+          res.status(500).json({ error: 'Failed to download file', details: err.message });
         }
       });
 
       stream.pipe(res);
 
       stream.on('end', () => {
-        logger.info({ fileKey }, '[downloadFile] Download completed');
+        logger.info({ fileKey }, '[downloadFile] Download completed successfully');
       });
-    } catch (streamErr) {
+    } catch (streamErr: any) {
       logger.error({ streamErr, fileKey }, '[downloadFile] Error getting object');
-      throw streamErr;
+      if (!res.headersSent) {
+        res.status(streamErr.code === 'NotFound' || streamErr.code === 'NoSuchKey' ? 404 : 500).json({ 
+          error: 'Failed to download file',
+          fileKey: fileKey,
+          details: streamErr.message || streamErr.code 
+        });
+      }
+      return;
     }
   } catch (error) {
     logger.error({ error }, '[downloadFile] Failed');
-    next(error);
+    if (!res.headersSent) {
+      next(error);
+    }
   }
 };
 

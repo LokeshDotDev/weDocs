@@ -94,33 +94,77 @@ router.post('/anonymize-file', async (req, res) => {
 
 // Download anonymized file
 router.get('/download', async (req, res) => {
-  const { fileKey } = req.query;
+  let { fileKey } = req.query;
 
   if (!fileKey || typeof fileKey !== 'string') {
     return res.status(400).send({ error: 'fileKey is required' });
   }
 
+  // Decode the fileKey (it comes URL-encoded from the frontend)
   try {
-    const tempPath = path.join(os.tmpdir(), `download-${Date.now()}.docx`);
+    fileKey = decodeURIComponent(fileKey);
+  } catch (e) {
+    console.warn('Failed to decode fileKey, using as-is:', fileKey);
+  }
 
-    // Download from MinIO to temp
-    await minioClient.fGetObject(MINIO_BUCKET, fileKey, tempPath);
+  console.log('[reductor/download] Requested fileKey:', fileKey);
 
-    // Extract filename from fileKey
+  try {
+    // Check if file exists in MinIO first
+    try {
+      await minioClient.statObject(MINIO_BUCKET, fileKey);
+      console.log('[reductor/download] File exists in MinIO');
+    } catch (statErr: any) {
+      console.error('[reductor/download] File not found in MinIO:', statErr.message);
+      return res.status(404).json({ 
+        error: 'File not found in MinIO',
+        fileKey: fileKey,
+        details: statErr.message 
+      });
+    }
+
+    // Extract filename from fileKey (handle special characters)
     const filename = path.basename(fileKey);
+    
+    // Sanitize filename for Content-Disposition header (remove special chars that break headers)
+    const safeFilename = filename
+      .replace(/[^\x20-\x7E]/g, '-') // Replace non-ASCII with hyphen
+      .replace(/["]/g, "'"); // Replace quotes with apostrophe
+
+    console.log('[reductor/download] Streaming file:', filename);
 
     // Set proper headers for DOCX download
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
 
-    // Stream to client
-    res.download(tempPath, filename, (err) => {
-      if (err) console.error('Download error:', err);
-      // Clean up after download completes
-      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    // Stream directly from MinIO to client (more efficient than temp file)
+    const stream = await minioClient.getObject(MINIO_BUCKET, fileKey);
+
+    stream.on('error', (streamErr) => {
+      console.error('[reductor/download] Stream error:', streamErr);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to stream file', details: streamErr.message });
+      }
     });
+
+    stream.on('end', () => {
+      console.log('[reductor/download] Download completed successfully');
+    });
+
+    // Pipe the stream to response
+    stream.pipe(res);
+
   } catch (err: any) {
-    res.status(404).send({ error: err.message || 'File not found' });
+    console.error('[reductor/download] Error:', err);
+    const errorMessage = err.message || 'Failed to download file';
+    
+    if (!res.headersSent) {
+      res.status(err.code === 'NotFound' || err.code === 'NoSuchKey' ? 404 : 500).json({ 
+        error: errorMessage,
+        fileKey: fileKey,
+        details: err.code || 'Unknown error'
+      });
+    }
   }
 });
 
@@ -134,6 +178,49 @@ router.post('/anonymize-text', async (req, res) => {
       res.status(err.response.status).send(err.response.data);
     } else {
       res.status(503).send({ error: err.message || 'Reductor unavailable' });
+    }
+  }
+});
+
+// Debug endpoint to check if file exists in MinIO
+router.get('/check-file', async (req, res) => {
+  let { fileKey } = req.query;
+
+  if (!fileKey || typeof fileKey !== 'string') {
+    return res.status(400).json({ error: 'fileKey is required' });
+  }
+
+  // Decode the fileKey
+  try {
+    fileKey = decodeURIComponent(fileKey);
+  } catch (e) {
+    console.warn('Failed to decode fileKey, using as-is:', fileKey);
+  }
+
+  try {
+    const stat = await minioClient.statObject(MINIO_BUCKET, fileKey);
+    res.json({
+      exists: true,
+      fileKey: fileKey,
+      size: stat.size,
+      lastModified: stat.lastModified,
+      etag: stat.etag,
+    });
+  } catch (err: any) {
+    if (err.code === 'NotFound' || err.code === 'NoSuchKey') {
+      res.status(404).json({
+        exists: false,
+        fileKey: fileKey,
+        error: 'File not found in MinIO',
+        code: err.code,
+      });
+    } else {
+      res.status(500).json({
+        exists: false,
+        fileKey: fileKey,
+        error: err.message,
+        code: err.code,
+      });
     }
   }
 });

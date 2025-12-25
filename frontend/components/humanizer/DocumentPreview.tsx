@@ -66,10 +66,31 @@ export function DocumentPreview({
 	}, [originalFileKey, humanizedFileKey, API_BASE]);
 
 	const downloadFile = (fileKey: string, filename: string) => {
-		const downloadUrl = `${API_BASE}/api/files/download?fileKey=${encodeURIComponent(
-			fileKey
-		)}&filename=${encodeURIComponent(filename)}`;
-		window.open(downloadUrl, "_blank");
+		try {
+			const downloadUrl = `${API_BASE}/api/files/download?fileKey=${encodeURIComponent(
+				fileKey
+			)}`;
+			
+			// Create a temporary anchor element to trigger download
+			const link = document.createElement("a");
+			link.href = downloadUrl;
+			link.download = filename;
+			link.style.display = "none";
+			document.body.appendChild(link);
+			link.click();
+			
+			// Clean up after a short delay
+			setTimeout(() => {
+				try {
+					document.body.removeChild(link);
+				} catch (e) {
+					// Ignore cleanup errors
+				}
+			}, 100);
+		} catch (error) {
+			console.error("Error downloading file:", error);
+			alert("Failed to download file. Please try again.");
+		}
 	};
 
 	const handleRetry = () => {

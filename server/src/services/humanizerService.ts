@@ -86,10 +86,29 @@ class HumanizerService {
   }
 
   private deriveOutputKey(fileKey: string): string {
-    if (fileKey.toLowerCase().endsWith('.docx')) {
-      return fileKey.replace(/\.docx$/i, '_humanized.docx');
+    // Replace the stage directory (raw -> formatted) and append _humanized
+    // Example: users/u_123/uploads/abc123/raw/file.docx -> users/u_123/uploads/abc123/formatted/file_humanized.docx
+    let outputKey = fileKey;
+    
+    // Replace /raw/ with /formatted/ if present
+    if (outputKey.includes('/raw/')) {
+      outputKey = outputKey.replace('/raw/', '/formatted/');
+    } else if (outputKey.includes('/converted/')) {
+      outputKey = outputKey.replace('/converted/', '/formatted/');
+    } else {
+      // If no stage directory, try to insert /formatted/ before the filename
+      const parts = outputKey.split('/');
+      const filename = parts.pop() || '';
+      parts.push('formatted');
+      parts.push(filename);
+      outputKey = parts.join('/');
     }
-    return `${fileKey}_humanized.docx`;
+    
+    // Append _humanized before .docx extension
+    if (outputKey.toLowerCase().endsWith('.docx')) {
+      return outputKey.replace(/\.docx$/i, '_humanized.docx');
+    }
+    return `${outputKey}_humanized.docx`;
   }
 
   /**

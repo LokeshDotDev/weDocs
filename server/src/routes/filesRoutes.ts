@@ -1,16 +1,4 @@
-import {
-  listFiles,
-  getFileUrl,
-  listUsers,
-  listUploads,
-  listFormattedFiles,
-  getFileContent,
-  saveFileContent,
-  getDocxFileUrl,
-  saveDocxFile,
-  streamDocxByKey,
-  downloadFile,
-  previewFile, Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import {
   listFiles,
   getFileUrl,
@@ -24,16 +12,6 @@ import {
   streamDocxByKey,
   downloadFile,
   previewFile,
-  listFiles,
-  getFileUrl,
-  listUsers,
-  listUploads,
-  listFormattedFiles,
-  getFileContent,
-  saveFileContent,
-  getDocxFileUrl,
-  saveDocxFile,
-  streamDocxByKey,
 } from '../controllers/filesController.js';
 
 const router = Router();
@@ -50,10 +28,12 @@ router.post('/content', saveFileContent);
 router.get('/docx-url', getDocxFileUrl);
 router.get('/docx-by-key', streamDocxByKey); // Stream directly by MinIO key (no presigned URL)
 router.post('/docx-save', saveDocxFile);
+
 // Health check endpoint for ONLYOFFICE container connectivity
 router.get('/callback-health', (_req, res) => {
   res.json({ status: 'ok', message: 'ONLYOFFICE can reach this callback endpoint' });
 });
+
 // Proxy endpoint to fetch document with proper CORS headers
 // Usage: /api/files/docx-proxy?url=<presigned-url>
 router.get('/docx-proxy', async (req, res, next) => {
@@ -179,13 +159,8 @@ router.get('/docx-list', async (req: Request, res: Response, next: NextFunction)
   }
 });
 
-// Preview endpoint: Extract text from DOCX for comparison
-router.get('/preview', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-
-// Download and preview endpoints
-router.get('/download', downloadFile);
-router.get('/preview', previewFile);
-
+// Helper endpoint to find humanized file by original fileKey
+router.get('/find-humanized', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { fileKey } = req.query;
     if (!fileKey || typeof fileKey !== 'string') {
@@ -195,34 +170,72 @@ router.get('/preview', previewFile);
 
     const { minioClient } = await import('../lib/minio.js');
     const { config } = await import('../lib/config.js');
-    const mammoth = await import('mammoth');
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    const os = await import('node:os');
-    const { promisify } = await import('node:util');
-    const { pipeline } = await import('node:stream');
 
-    const pipelineAsync = promisify(pipeline);
+    // Try to find humanized file in formatted directory
+    let humanizedKey = fileKey;
+    
+    // Replace /raw/ with /formatted/ if present
+    if (humanizedKey.includes('/raw/')) {
+      humanizedKey = humanizedKey.replace('/raw/', '/formatted/');
+    }
+    
+    // Append _humanized before .docx extension
+    if (humanizedKey.toLowerCase().endsWith('.docx')) {
+      humanizedKey = humanizedKey.replace(/\.docx$/i, '_humanized.docx');
+    } else {
+      humanizedKey = `${humanizedKey}_humanized.docx`;
+    }
 
-    // Download file to temp location
-    const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'preview-'));
-    const tmpFile = path.join(tmpDir, 'document.docx');
+    // Check if file exists
+    try {
+      await minioClient.statObject(config.MINIO_BUCKET, humanizedKey);
+      res.json({ 
+        success: true, 
+        fileKey: humanizedKey,
+        exists: true 
+      });
+    } catch (statErr: any) {
+      // Try alternative paths
+      const alternatives: string[] = [];
+      
+      // Try with raw -> formatted replacement
+      if (fileKey.includes('/raw/')) {
+        const alt = fileKey.replace('/raw/', '/formatted/').replace(/\.docx$/i, '_humanized.docx');
+        alternatives.push(alt);
+      }
+      
+      // Try just appending _humanized
+      alternatives.push(fileKey.replace(/\.docx$/i, '_humanized.docx'));
+      
+      // Try finding any file with _humanized in the same upload directory
+      const parts = fileKey.split('/');
+      if (parts.length >= 4) {
+        const uploadPrefix = parts.slice(0, 4).join('/'); // users/userId/uploads/uploadId
+        const stream = minioClient.listObjectsV2(config.MINIO_BUCKET, uploadPrefix, true);
+        for await (const obj of stream) {
+          if (obj.name && obj.name.includes('_humanized.docx') && obj.name.includes(parts[parts.length - 1].replace('.docx', ''))) {
+            alternatives.push(obj.name);
+            break;
+          }
+        }
+      }
 
-    const stream = await minioClient.getObject(config.MINIO_BUCKET, fileKey);
-    await pipelineAsync(stream, fs.createWriteStream(tmpFile));
-
-    // Extract text using mammoth
-    const result = await mammoth.extractRawText({ path: tmpFile });
-
-    // Cleanup
-    await fs.promises.rm(tmpDir, { recursive: true, force: true });
-
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.send(result.value);
+      res.json({ 
+        success: false, 
+        requested: fileKey,
+        expected: humanizedKey,
+        alternatives,
+        exists: false 
+      });
+    }
   } catch (error) {
-    console.error('Error generating preview:', error);
+    console.error('Error finding humanized file:', error);
     next(error);
   }
 });
+
+// Download and preview endpoints
+router.get('/download', downloadFile);
+router.get('/preview', previewFile);
 
 export default router;

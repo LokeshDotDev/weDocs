@@ -151,10 +151,22 @@ export default function HumanizerPage() {
 	const handleDownload = async (outputFileKey: string) => {
 		try {
 			const url = `/api/files/download?fileKey=${encodeURIComponent(outputFileKey)}`;
-			// Open in a new tab to ensure browser allows sequential downloads
-			window.open(url, "_blank");
+			
+			// Create a temporary anchor element to trigger download
+			const link = document.createElement("a");
+			link.href = url;
+			link.download = outputFileKey.split('/').pop() || 'document.docx';
+			link.style.display = "none";
+			document.body.appendChild(link);
+			link.click();
+			
+			// Clean up after a short delay
+			setTimeout(() => {
+				document.body.removeChild(link);
+			}, 100);
 		} catch (error) {
 			console.error("Error downloading file:", error);
+			alert("Failed to download file. Please try again.");
 		}
 	};
 
@@ -162,24 +174,38 @@ export default function HumanizerPage() {
 		if (!results || results.length === 0) return;
 		setDownloadingAll(true);
 		try {
-			// Use hidden iframes to initiate separate downloads without popups.
-			// This approach works better across browsers than multiple window.open calls.
-			results.forEach((r, idx) => {
-				const outKey = r.outputFileKey;
-				const url = `/api/files/download?fileKey=${encodeURIComponent(outKey)}`;
+			// Download files sequentially with delays to avoid browser blocking
+			for (let i = 0; i < results.length; i++) {
+				const result = results[i];
+				const url = `/api/files/download?fileKey=${encodeURIComponent(result.outputFileKey)}`;
+				
+				// Create anchor element for each download
+				const link = document.createElement("a");
+				link.href = url;
+				link.download = result.outputFileKey.split('/').pop() || 'document.docx';
+				link.style.display = "none";
+				document.body.appendChild(link);
+				
+				// Trigger download
+				link.click();
+				
+				// Clean up
 				setTimeout(() => {
-					const iframe = document.createElement("iframe");
-					iframe.style.display = "none";
-					iframe.src = url;
-					document.body.appendChild(iframe);
-					// Clean up iframe after some time
-					setTimeout(() => {
-						try {
-							iframe.parentNode?.removeChild(iframe);
-						} catch {}
-					}, 5000);
-				}, idx * 200);
-			});
+					try {
+						document.body.removeChild(link);
+					} catch (e) {
+						// Ignore cleanup errors
+					}
+				}, 100);
+				
+				// Wait between downloads to avoid browser blocking
+				if (i < results.length - 1) {
+					await new Promise(resolve => setTimeout(resolve, 500));
+				}
+			}
+		} catch (error) {
+			console.error("Error downloading files:", error);
+			alert("Some files failed to download. Please try downloading individually.");
 		} finally {
 			setDownloadingAll(false);
 		}
