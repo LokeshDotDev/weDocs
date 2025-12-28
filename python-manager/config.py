@@ -21,8 +21,16 @@ class Config:
                 "health": "/health",
             }
         },
-        "reductor": {
-            "url": os.getenv("REDUCTOR_MODULE_URL", "http://localhost:5017"),
+        "reductor_v2": {
+            "url": os.getenv("REDUCTOR_V2_MODULE_URL", "http://localhost:5017"),
+            "endpoints": {
+                "anonymize-text": "/anonymize/text",
+                "anonymize-docx": "/anonymize/docx",
+                "health": "/health",
+            }
+        },
+        "reductor_v3": {
+            "url": os.getenv("REDUCTOR_V3_MODULE_URL", "http://localhost:5018"),
             "endpoints": {
                 "anonymize-text": "/anonymize/text",
                 "anonymize-docx": "/anonymize/docx",

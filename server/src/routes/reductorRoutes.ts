@@ -182,6 +182,103 @@ router.post('/anonymize-text', async (req, res) => {
   }
 });
 
+// NEW: Redact NAME and ROLL NUMBER using Reductor Service V3
+router.post('/redact', async (req, res) => {
+  const { fileKey, fileName, removeName, removeRollNo } = req.body;
+  // Always use fileKey as the true MinIO key for all operations
+
+  if (!fileKey || !fileName) {
+    return res.status(400).json({ error: 'fileKey and fileName are required' });
+  }
+
+  const REDUCTOR_V3_URL = process.env.REDUCTOR_SERVICE_V3_URL || 'http://localhost:5018';
+  const tmpDir = os.tmpdir();
+  const inputPath = path.join(tmpDir, `reductor_input_${Date.now()}_${path.basename(fileKey)}`);
+  const outputPath = path.join(tmpDir, `reductor_output_${Date.now()}_${path.basename(fileKey)}`);
+
+  try {
+    console.log('[reductor/redact] Downloading file from MinIO:', fileKey);
+    // Download file from MinIO to temp location
+    await new Promise<void>((resolve, reject) => {
+      minioClient.fGetObject(MINIO_BUCKET, fileKey, inputPath, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+
+    let docxInputPath = inputPath;
+    // If input is PDF, convert to DOCX first
+    if (fileKey.toLowerCase().endsWith('.pdf')) {
+      const converterUrl = `${MANAGER_URL}/convert/pdf-to-docx`;
+      const converterResp = await axios.post(converterUrl, {
+        user_id: 'auto',
+        upload_id: 'auto',
+        filename: fileKey, // always use the true MinIO key
+        relative_path: fileKey // always use the true MinIO key
+      }, { timeout: 180000 });
+      if (converterResp.status !== 200 || !converterResp.data.converted_path) {
+        throw new Error('PDF to DOCX conversion failed');
+      }
+      docxInputPath = converterResp.data.converted_path;
+    }
+
+    console.log('[reductor/redact] Calling reductor-service-v3 at:', REDUCTOR_V3_URL);
+    // Call reductor-service-v3 to redact the document
+    const response = await axios.post(
+      `${REDUCTOR_V3_URL}/redact/document`,
+      {
+        input_file_path: docxInputPath,
+        output_file_path: outputPath,
+        file_format: 'docx',
+        remove_name: removeName !== false,
+        remove_roll_no: removeRollNo !== false
+      },
+      { timeout: 120000 }
+    );
+
+    if (response.status !== 200 || response.data.status !== 'success') {
+      throw new Error('Redaction failed at service level');
+    }
+
+    const { redacted_name, redacted_roll_no } = response.data;
+    console.log('[reductor/redact] Redaction complete. Uploading to MinIO...');
+    // Upload redacted file back to MinIO
+    const redactedFileName = fileName.replace(/(\.[^.]+)$/, '_redacted$1');
+    const redactedKey = `${fileKey.split('/').slice(0, -1).join('/')}/${redactedFileName}`;
+    await minioClient.fPutObject(MINIO_BUCKET, redactedKey, outputPath, {
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    });
+    console.log('[reductor/redact] Upload complete:', redactedKey);
+    // Clean up temp files
+    try {
+      fs.unlinkSync(inputPath);
+      fs.unlinkSync(outputPath);
+    } catch (cleanupErr) {
+      console.warn('[reductor/redact] Failed to clean up temp files:', cleanupErr);
+    }
+    res.json({
+      status: 'success',
+      originalFile: fileKey,
+      redactedFile: redactedKey,
+      redactedName: redacted_name,
+      redactedRollNo: redacted_roll_no
+    });
+  } catch (err: any) {
+    console.error('[reductor/redact] Error:', err.message);
+    // Clean up temp files on error
+    try {
+      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+      if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+    } catch (cleanupErr) {
+      console.warn('[reductor/redact] Failed to clean up temp files:', cleanupErr);
+    }
+    res.status(500).json({ 
+      error: err.message || 'Redaction failed',
+      details: err.response?.data || null
+    });
+  }
+});
+
 // Debug endpoint to check if file exists in MinIO
 router.get('/check-file', async (req, res) => {
   let { fileKey } = req.query;

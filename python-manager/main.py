@@ -66,12 +66,16 @@ async def health_check():
     }
 
 @app.post("/reductor/anonymize-text")
-async def reductor_anonymize_text(request: AnonymizeTextRequest) -> Dict[str, Any]:
+async def reductor_anonymize_text(request: AnonymizeTextRequest, version: Optional[str] = None) -> Dict[str, Any]:
+    """
+    version: 'v2' or 'v3' (query param, defaults to v3 if not provided)
+    """
     try:
         logger.info("🧹 Routing text anonymization to reductor")
-        svc = config.SERVICES.get("reductor")
+        svc_key = f"reductor_{version}" if version in ("v2", "v3") else "reductor_v3"
+        svc = config.SERVICES.get(svc_key)
         if not svc:
-            raise HTTPException(status_code=500, detail="Reductor service not registered")
+            raise HTTPException(status_code=500, detail=f"Reductor service {svc_key} not registered")
         url = f"{svc['url']}{svc['endpoints']['anonymize-text']}"
         resp = requests.post(url, json=request.dict(), timeout=120)
         if resp.status_code == 200:
@@ -83,12 +87,16 @@ async def reductor_anonymize_text(request: AnonymizeTextRequest) -> Dict[str, An
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/reductor/anonymize-docx")
-async def reductor_anonymize_docx(request: AnonymizeDocxRequest) -> Dict[str, Any]:
+async def reductor_anonymize_docx(request: AnonymizeDocxRequest, version: Optional[str] = None) -> Dict[str, Any]:
+    """
+    version: 'v2' or 'v3' (query param, defaults to v3 if not provided)
+    """
     try:
         logger.info("🧹 Routing DOCX anonymization to reductor")
-        svc = config.SERVICES.get("reductor")
+        svc_key = f"reductor_{version}" if version in ("v2", "v3") else "reductor_v3"
+        svc = config.SERVICES.get(svc_key)
         if not svc:
-            raise HTTPException(status_code=500, detail="Reductor service not registered")
+            raise HTTPException(status_code=500, detail=f"Reductor service {svc_key} not registered")
         url = f"{svc['url']}{svc['endpoints']['anonymize-docx']}"
         resp = requests.post(url, json=request.dict(), timeout=600)
         if resp.status_code == 200:
